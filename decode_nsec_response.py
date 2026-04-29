@@ -218,6 +218,28 @@ def explain_nsec_nodata(qname, qtype, nsec_records, zone):
     """Explain NSEC records in a NODATA response."""
     qtype_num = dns.rdatatype.from_text(qtype) if isinstance(qtype, str) else qtype
 
+    is_wildcard_nodata = False
+    for owner, nxt, types, rdata in nsec_records:
+        if owner == qname:
+            break
+        if str(owner.labels[0], errors='replace') == '*':
+            wc_parent = dns.name.Name(owner.labels[1:])
+            if qname.is_subdomain(wc_parent):
+                is_wildcard_nodata = True
+                break
+        if zone:
+            covers, _ = nsec_covers(owner, nxt, qname, zone)
+            if covers:
+                is_wildcard_nodata = True
+                break
+
+    if is_wildcard_nodata:
+        print(f"\nWildcard NODATA: {qname} does not exist, but a wildcard "
+              f"matched.")
+        print(f"The wildcard lacks a {qtype} record.")
+    else:
+        print(f"\nNODATA: {qname} exists but has no {qtype} record.")
+
     for owner, nxt, types, rdata in nsec_records:
         print(f"\n  NSEC: {owner} -> {nxt}")
         print(f"    Type bitmap: [{format_types(types)}]")
@@ -405,6 +427,7 @@ def explain_nsec3_nodata(qname, qtype_str, nsec3_records, zone,
                       for _, oh, _, _, _ in nsec3_records)
 
     if exact_match:
+        print(f"\nNODATA: {qname} exists but has no {qtype_str} record.")
         for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
             opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
             print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
@@ -788,7 +811,6 @@ def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
             print(f"\nNXDOMAIN: {qname} does not exist.")
             explain_nsec_nxdomain(qname, nsec_records, zone)
         elif nodata:
-            print(f"\nNODATA: {qname} exists but has no {qtype_str} record.")
             explain_nsec_nodata(qname, qtype_str, nsec_records, zone)
         elif wildcard:
             print(f"\nWildcard-synthesized answer for {qname}.")
@@ -809,7 +831,6 @@ def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
             explain_nsec3_nxdomain(
                 qname, nsec3_records, zone, salt_hex, iterations)
         elif nodata:
-            print(f"\nNODATA: {qname} exists but has no {qtype_str} record.")
             explain_nsec3_nodata(
                 qname, qtype_str, nsec3_records, zone, salt_hex, iterations)
         elif wildcard:
