@@ -553,38 +553,57 @@ def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
 
 def explain_nsec3_wildcard(qname, nsec3_records, zone, salt_hex, iterations):
     """Explain NSEC3 records in a wildcard-synthesized response."""
-    h_qname = nsec3_hash_name(qname, salt_hex, iterations)
-    print(f"\n  H({qname}) = {h_qname}")
+    candidates = []
+    name = qname.parent()
+    while name.is_subdomain(zone):
+        candidates.append(name)
+        name = name.parent()
+
+    ncn_match = None
+    for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
+        for ce in candidates:
+            rel = qname.relativize(ce)
+            ncn = dns.name.Name((rel.labels[-1],) + ce.labels)
+            h_ncn = nsec3_hash_name(ncn, salt_hex, iterations)
+            cov, wrap = nsec3_covers(owner_hash, next_hash, h_ncn)
+            if cov:
+                ncn_match = (owner_hash, next_hash, ncn, h_ncn, ce, wrap)
+                break
+        if ncn_match:
+            break
+
+    if ncn_match:
+        ncn_name = ncn_match[2]
+        h_ncn = ncn_match[3]
+        ce = ncn_match[4]
+        wc = dns.name.Name((b'*',) + ce.labels)
+        print(f"\n  Closest encloser: {ce}")
+        print(f"  Next closer name: {ncn_name}")
+        print(f"  Wildcard:         {wc}")
+        print(f"  H({ncn_name}) = {h_ncn}")
 
     for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
         opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
         print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
         print(f"    Type bitmap: [{format_types(types)}]")
 
-        covers, wraparound = nsec3_covers(owner_hash, next_hash, h_qname)
-        if covers:
-            wrap_note = " (wrap-around)" if wraparound else ""
-            print(f"\n    Role: Covers H({qname}) — next closer name "
+        if ncn_match and owner_hash == ncn_match[0] \
+                and next_hash == ncn_match[1]:
+            wrap_note = " (wrap-around)" if ncn_match[5] else ""
+            ncn_name = ncn_match[2]
+            print(f"\n    Role: Covers H({ncn_name}) — next closer name "
                   f"cover{wrap_note}")
-            print(f"    Proves no exact match exists for {qname},")
+            print(f"    Proves no closer match than {ncn_match[4]} exists "
+                  f"for {qname},")
             print(f"    validating that the answer was synthesized "
                   f"from a wildcard.")
         else:
-            candidates = []
-            name = qname.parent()
-            while name.is_subdomain(zone):
-                candidates.append(name)
-                name = name.parent()
-            for ce in candidates:
-                ncn = dns.name.Name(
-                    (qname.relativize(ce).labels[0],) + ce.labels)
-                h_ncn = nsec3_hash_name(ncn, salt_hex, iterations)
-                cov, wrap = nsec3_covers(owner_hash, next_hash, h_ncn)
-                if cov:
-                    wrap_note = " (wrap-around)" if wrap else ""
-                    print(f"\n    Role: Covers H({ncn}){wrap_note}")
-                    print(f"    H({ncn}) = {h_ncn}")
-                    break
+            covers, wraparound = nsec3_covers(
+                owner_hash, next_hash,
+                nsec3_hash_name(qname, salt_hex, iterations))
+            if covers:
+                wrap_note = " (wrap-around)" if wraparound else ""
+                print(f"\n    Role: Covers H({qname}){wrap_note}")
 
         if rdata.flags & 0x01:
             print(f"    Opt-out flag set: unsigned delegations may "
