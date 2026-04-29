@@ -39,6 +39,31 @@ record in the authenticated denial proof:
 
 ## Sample Output
 
+NSEC3 NODATA
+
+```
+$ ./decode_nsec_response.py salesforce.com. TLSA
+
+Query: salesforce.com. TLSA
+Response: NOERROR [AD]
+======================================================================
+Zone: salesforce.com.
+NSEC3 params: algorithm 1, iterations 0, salt 7FEA7B83
+
+NODATA: salesforce.com. exists but has no TLSA record.
+
+  H(salesforce.com.) = 49STKNJU01HOVPN0L8N7MMD35E9VD3VD
+
+  NSEC3: 49STKNJU01HOVPN0L8N7MMD35E9VD3VD -> 49T2A4TT2OHA06O3HB89B4PCF7U0824L
+    Type bitmap: [A NS SOA MX TXT RRSIG DNSKEY NSEC3PARAM TYPE65534]
+
+    Role: Matches H(salesforce.com.)
+    The type bitmap does not include TLSA, proving no TLSA record exists at this name.
+
+```
+
+NSEC3 NXDOMAIN:
+
 ```
 $ ./decode_nsec_response.py foo.nxd123.salesforce.com. A
 
@@ -76,4 +101,31 @@ NXDOMAIN: foo.nxd123.salesforce.com. does not exist.
 
     Role: Covers H(nxd123.salesforce.com.) — next closer name cover
     Proves nxd123.salesforce.com. does not exist.
+```
+
+NSEC3 Wildcard Match:
+
+```
+$ ./decode_nsec_response.py foo.wild.dnskensa.com. A
+
+Query: foo.wild.dnskensa.com. A
+Response: NOERROR [AD]
+======================================================================
+Zone: dnskensa.com.
+NSEC3 params: algorithm 1, iterations 10, salt 73B2182A738FCBC4
+
+Wildcard-synthesized answer for foo.wild.dnskensa.com..
+
+  Closest encloser: wild.dnskensa.com.
+  Next closer name: foo.wild.dnskensa.com.
+  Wildcard:         *.wild.dnskensa.com.
+  H(foo.wild.dnskensa.com.) = 3BPL37FUV6JQLG6BLVIRV23T5JVP1H4L
+
+  NSEC3: 33OE6CIJFV452QC67M4A72F474I3M2E5 -> 3F3DEH8FT59Q4S2MNVN446MFALKSAFSU
+    Type bitmap: [A AAAA RRSIG]
+
+    Role: Covers H(foo.wild.dnskensa.com.) — next closer name cover
+    Proves no closer match than wild.dnskensa.com. exists for foo.wild.dnskensa.com.,
+    validating that the answer was synthesized from a wildcard.
+
 ```
