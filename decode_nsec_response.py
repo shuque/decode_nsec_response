@@ -401,36 +401,143 @@ def explain_nsec3_nodata(qname, qtype_str, nsec3_records, zone,
     h_qname = nsec3_hash_name(qname, salt_hex, iterations)
     print(f"\n  H({qname}) = {h_qname}")
 
+    exact_match = any(oh == h_qname
+                      for _, oh, _, _, _ in nsec3_records)
+
+    if exact_match:
+        for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
+            opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
+            print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
+            print(f"    Type bitmap: [{format_types(types)}]")
+
+            if owner_hash == h_qname:
+                print(f"\n    Role: Matches H({qname})")
+
+                if isinstance(qtype_str, str):
+                    if qtype_num in types:
+                        print(f"    NOTE: {qtype_str} IS present in the "
+                              f"bitmap — unexpected for NODATA")
+                    else:
+                        print(f"    The type bitmap does not include "
+                              f"{qtype_str}, proving no {qtype_str} "
+                              f"record exists at this name.")
+
+                cdoe_types = types - {dns.rdatatype.RRSIG,
+                                      dns.rdatatype.NSEC3}
+                has_nxname = NXNAME_TYPE in cdoe_types
+                is_minimal = cdoe_types <= {NXNAME_TYPE}
+
+                if is_minimal:
+                    print(f"\n    Pattern: Compact Denial of Existence "
+                          f"with NSEC3 (RFC 9824 Section 4)")
+                    if has_nxname:
+                        print(f"    NXNAME (TYPE128) present — name "
+                              f"does not exist")
+                    else:
+                        print(f"    Minimal bitmap (no real types) — "
+                              f"likely CDoE without NXNAME")
+
+            if rdata.flags & 0x01:
+                print(f"    Opt-out flag set: unsigned delegations may "
+                      f"exist within this range.")
+        return
+
+    _explain_nsec3_wildcard_nodata(
+        qname, qtype_str, qtype_num, nsec3_records, zone,
+        salt_hex, iterations, h_qname)
+
+
+def _explain_nsec3_wildcard_nodata(qname, qtype_str, qtype_num,
+                                   nsec3_records, zone, salt_hex,
+                                   iterations, h_qname):
+    """Explain NSEC3 wildcard NODATA: qname doesn't exist, a wildcard
+    matched, but the wildcard lacks the queried type."""
+    candidates = []
+    name = qname
+    while name.is_subdomain(zone):
+        candidates.append(name)
+        name = name.parent()
+
+    ce_found = None
+    ce_name = None
+    ncn_found = None
+    wc_found = None
+
+    for candidate in reversed(candidates):
+        h_candidate = nsec3_hash_name(candidate, salt_hex, iterations)
+        for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
+            if owner_hash == h_candidate:
+                ce_found = (owner_name, owner_hash, next_hash, types, rdata)
+                ce_name = candidate
+
+                ncn_idx = candidates.index(candidate) - 1
+                if ncn_idx >= 0:
+                    rel = qname.relativize(candidate)
+                    ncn_name = dns.name.Name(
+                        (rel.labels[-1],) + candidate.labels)
+                    h_ncn = nsec3_hash_name(ncn_name, salt_hex, iterations)
+
+                    wc_test = dns.name.Name((b'*',) + candidate.labels)
+                    h_wc = nsec3_hash_name(wc_test, salt_hex, iterations)
+
+                    for on, oh, nh, ty, rd in nsec3_records:
+                        covers, _ = nsec3_covers(oh, nh, h_ncn)
+                        if covers:
+                            ncn_found = (on, oh, nh, ty, rd,
+                                         ncn_name, h_ncn)
+                        if oh == h_wc:
+                            wc_found = (on, oh, nh, ty, rd,
+                                        wc_test, h_wc)
+                break
+
+    if ce_name:
+        rel = qname.relativize(ce_name)
+        ncn_full = dns.name.Name((rel.labels[-1],) + ce_name.labels)
+        wc_at_ce = dns.name.Name((b'*',) + ce_name.labels)
+        h_wc_ce = nsec3_hash_name(wc_at_ce, salt_hex, iterations)
+        print(f"\n  Wildcard NODATA: {qname} does not exist, but "
+              f"{wc_at_ce} matched.")
+        print(f"  The wildcard lacks a {qtype_str} record.")
+        print(f"\n  Closest encloser: {ce_name}")
+        print(f"  Next closer name: {ncn_full}")
+        print(f"  Wildcard at CE:   {wc_at_ce}")
+        if ncn_found:
+            print(f"  H({ncn_found[5]}) = {ncn_found[6]}")
+        print(f"  H({wc_at_ce}) = {h_wc_ce}")
+
     for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
         opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
         print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
         print(f"    Type bitmap: [{format_types(types)}]")
 
-        if owner_hash == h_qname:
-            print(f"\n    Role: Matches H({qname})")
+        if ce_found and owner_hash == ce_found[1]:
+            print(f"\n    Role: Matches H({ce_name}) — closest encloser "
+                  f"proof")
+            print(f"    Proves {ce_name} exists in the zone.")
 
+        elif ncn_found and owner_hash == ncn_found[1] \
+                and next_hash == ncn_found[2]:
+            ncn_name = ncn_found[5]
+            h_ncn = ncn_found[6]
+            _, wraparound = nsec3_covers(owner_hash, next_hash, h_ncn)
+            wrap_note = " (wrap-around)" if wraparound else ""
+            print(f"\n    Role: Covers H({ncn_name}) — next closer "
+                  f"name cover{wrap_note}")
+            print(f"    Proves {ncn_name} does not exist, so the "
+                  f"wildcard applies.")
+
+        elif wc_found and owner_hash == wc_found[1]:
+            wc_n = wc_found[5]
+            print(f"\n    Role: Matches H({wc_n}) — wildcard match")
             if isinstance(qtype_str, str):
                 if qtype_num in types:
                     print(f"    NOTE: {qtype_str} IS present in the "
-                          f"bitmap — unexpected for NODATA")
+                          f"bitmap — unexpected for wildcard NODATA")
                 else:
                     print(f"    The type bitmap does not include "
-                          f"{qtype_str}, proving no {qtype_str} record "
-                          f"exists at this name.")
+                          f"{qtype_str}, proving the wildcard")
+                    print(f"    cannot synthesize a {qtype_str} record.")
 
-            cdoe_types = types - {dns.rdatatype.RRSIG, dns.rdatatype.NSEC3}
-            has_nxname = NXNAME_TYPE in cdoe_types
-            is_minimal = cdoe_types <= {NXNAME_TYPE}
-
-            if is_minimal:
-                print(f"\n    Pattern: Compact Denial of Existence with "
-                      f"NSEC3 (RFC 9824 Section 4)")
-                if has_nxname:
-                    print(f"    NXNAME (TYPE128) present — name does "
-                          f"not exist")
-                else:
-                    print(f"    Minimal bitmap (no real types) — likely "
-                          f"CDoE without NXNAME")
         else:
             covers, wraparound = nsec3_covers(
                 owner_hash, next_hash, h_qname)
