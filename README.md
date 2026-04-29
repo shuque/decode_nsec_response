@@ -129,3 +129,30 @@ Wildcard-synthesized answer for foo.wild.dnskensa.com..
     validating that the answer was synthesized from a wildcard.
 
 ```
+
+NSEC NXDOMAIN:
+
+```
+$ ./decode_nsec_response.py foobar. A
+
+Query: foobar. A
+Response: NXDOMAIN [AD]
+======================================================================
+Zone: .
+
+NXDOMAIN: foobar. does not exist.
+
+  NSEC: . -> aaa.
+    Type bitmap: [NS SOA RRSIG NSEC DNSKEY ZONEMD]
+
+    Role: Covers the wildcard (*.)
+    Proves no wildcard exists at the closest encloser (.),
+    so no wildcard synthesis can produce an answer.
+
+  NSEC: foo. -> food.
+    Type bitmap: [NS DS RRSIG NSEC]
+
+    Role: Covers the queried name (foobar.)
+    Owner sorts before qname, next sorts after qname
+    in canonical order, proving foobar. does not exist.
+```
