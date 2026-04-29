@@ -485,9 +485,8 @@ def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
                 break
 
     if ce_name:
-        ncn_label = qname.relativize(ce_name).labels[0].decode()
-        ncn_full = dns.name.Name(
-            (qname.relativize(ce_name).labels[0],) + ce_name.labels)
+        rel = qname.relativize(ce_name)
+        ncn_full = dns.name.Name((rel.labels[-1],) + ce_name.labels)
         print(f"\n  Closest encloser: {ce_name}")
         print(f"  Next closer name: {ncn_full}")
         wc_at_ce = dns.name.Name((b'*',) + ce_name.labels)
