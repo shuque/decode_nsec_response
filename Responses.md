@@ -1,0 +1,210 @@
+# Test Responses
+
+Raw dig output for test cases used during development of decode\_nsec\_response.py.
+All queries via DoH to Cloudflare (`dig -4 @cloudflare-dns.com +https ... +dnssec`).
+
+---
+
+## 1. NSEC NODATA (direct match, type absent)
+
+`nseczone.huque.com. TLSA`
+
+```
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 61882
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 0, AUTHORITY: 4, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;nseczone.huque.com.		IN	TLSA
+
+;; AUTHORITY SECTION:
+nseczone.huque.com.	3600	IN	SOA	mname.huque.com. hostmaster.huque.com. 1000001083 43200 3600 3628800 3600
+nseczone.huque.com.	3600	IN	RRSIG	SOA 13 3 86400 20260527031059 20260427021059 30534 nseczone.huque.com. KFh7EuYKr7kFx6HSNOBRMUBJpA/TTcndkBiioaHyzWzW0u1Yzq595lIX tjFcz0ZilCk2wZUzn6VnVCDANql08g==
+nseczone.huque.com.	3600	IN	NSEC	bar.nseczone.huque.com. NS SOA MX RRSIG NSEC DNSKEY TYPE65534
+nseczone.huque.com.	3600	IN	RRSIG	NSEC 13 3 3600 20260521080535 20260421074011 30534 nseczone.huque.com. agpGRqPhNe/zQWyeRFclsfY4mCNXKHll8ei4SheWMqC/bQlzPuhK+pwa Q46VdOyygioG7lQhJo2WGiJkGTPLBg==
+```
+
+## 2. NSEC NXDOMAIN (name cover + wildcard cover)
+
+`nonexistent.nseczone.huque.com. A`
+
+```
+;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 3991
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 0, AUTHORITY: 6, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;nonexistent.nseczone.huque.com.	IN	A
+
+;; AUTHORITY SECTION:
+nseczone.huque.com.	3600	IN	SOA	mname.huque.com. hostmaster.huque.com. 1000001083 43200 3600 3628800 3600
+nseczone.huque.com.	3600	IN	RRSIG	SOA 13 3 86400 20260527031059 20260427021059 30534 nseczone.huque.com. KFh7EuYKr7kFx6HSNOBRMUBJpA/TTcndkBiioaHyzWzW0u1Yzq595lIX tjFcz0ZilCk2wZUzn6VnVCDANql08g==
+jaguar.nseczone.huque.com. 3600	IN	NSEC	sub1.nseczone.huque.com. A RRSIG NSEC
+jaguar.nseczone.huque.com. 3600	IN	RRSIG	NSEC 13 4 3600 20260509094910 20260409085725 30534 nseczone.huque.com. XAq9PBS3t5LAJRdSulvoxicSYJQQ4UAH7pqj3dSXpTSneMPts7H3LnCN M8Q2HnrbgTkWIfypdjEQg1ul0Injpw==
+nseczone.huque.com.	3600	IN	NSEC	bar.nseczone.huque.com. NS SOA MX RRSIG NSEC DNSKEY TYPE65534
+nseczone.huque.com.	3600	IN	RRSIG	NSEC 13 3 3600 20260521080535 20260421074011 30534 nseczone.huque.com. agpGRqPhNe/zQWyeRFclsfY4mCNXKHll8ei4SheWMqC/bQlzPuhK+pwa Q46VdOyygioG7lQhJo2WGiJkGTPLBg==
+```
+
+## 3. NSEC NXDOMAIN (root zone)
+
+`foobar. A`
+
+```
+;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 64534
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 0, AUTHORITY: 6, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;foobar.				IN	A
+
+;; AUTHORITY SECTION:
+.			86400	IN	SOA	a.root-servers.net. nstld.verisign-grs.com. 2026042902 1800 900 604800 86400
+.			86400	IN	RRSIG	SOA 8 0 86400 20260512210000 20260429200000 54393 . k3if0eEKu92tGf7Ga14ApDxMASnNuZ/WbQEBHohwAYqKYtdi4XDjuBz3 sRwzpqSI5e8TSYzRoM6AWv4V48GA8T/ceBIDkCZ73PkqDDqKxZe3HIoF 53lYZyapSI9BW2u+z8AJCyQ9hsQ+vFzJH9frTbfcHTqSyPo1U3PbQnWO 7meyhUniw/Niw1ms12YDnNqeQ8pEB/Gef7tFPmpbE5wGjDszXHdnvPg6 9Kb9rKHPXemSDYjpNs7NPRj68yKuYSfjKoSGpbpGOuZGVcRyn6TCf+r6 cMSWXxUqHAJLca7EXu9mQ62xRaBdjmJbyr7NGy+LWgBPBi+Ov32Nh/yD yr/ZxA==
+foo.			86400	IN	NSEC	food. NS DS RRSIG NSEC
+foo.			86400	IN	RRSIG	NSEC 8 1 86400 20260512210000 20260429200000 54393 . ATXnWIUClwyGDNIDIimvx5Gqmhnoetf+ZIYPL+hV4qfZ1HIShYXmJjjX F4ZrJ5kZMWAm7sztYq7AZSj3J2v02+1SpcBMrqz+kwxZIaODHOA3RKWt 965Qf9L3HwguevGoA7KHiBHPL7pH0QCC7PsTv3ySJgGaf9s1vF4S2XNp iy9ClaX8wDy+4puITdSQfMnU4IBMgGCl5JqtIdyYyxStRLCocsLBc7JH 0QDnpgOdQ3rPHHZlbxyfOvfW39xTnMen3LvxiwRGcTKNqEvDvuiE6ujH rrGs+Y/utGU0CD/Z2bzVgNGIx+wFipm4Kt/kR9ReBjjm0Mc1TDFbfv2z y8+oZA==
+.			86400	IN	NSEC	aaa. NS SOA RRSIG NSEC DNSKEY ZONEMD
+.			86400	IN	RRSIG	NSEC 8 0 86400 20260512210000 20260429200000 54393 . B0h6L+iakIoEesPOPlBDIHiP1RESw96a9EGGp7sr7jMJn3IKs/5mwUga mkSmU+bm8lG7ZkR1U4JxRFYWkysuGpZPB6ZMTQNybmdMav7Y6bLpqlso Fn8Ka0gk37mzRp2g6OCu69Mr7Uiik+YHAvcygr0RK+f/unNZCIzLtwXB XcWeWGae18bcBaKSEYBK5XjAWY4QV2zmB1O2Z/E+29xlx5QALhQPcGgu t5ZJLNZtJw/V4LRceBfiwkWFtCTHodr9k9CgFRp/pzyO821izZCFouiz olUX1bW6Q6Zgdx8akG2JY823memFVo2JV9WLlX2UnxDxM6LNmu/WzpNY RkuBqA==
+```
+
+## 4. NSEC Compact Denial of Existence (CDoE with NXNAME)
+
+`nonexistent.cloudflare.com. A`
+
+```
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 64047
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 0, AUTHORITY: 4, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;nonexistent.cloudflare.com.	IN	A
+
+;; AUTHORITY SECTION:
+cloudflare.com.		300	IN	SOA	ns3.cloudflare.com. dns.cloudflare.com. 2402924228 10000 2400 604800 300
+cloudflare.com.		300	IN	RRSIG	SOA 13 2 300 20260501011437 20260428231437 34505 cloudflare.com. h87cSbmiMNA9alSHnEH/1Ta2P76HT5Od1Jc4k/OfTEqOkTkMPvSZtNgP pzhdXBXJoTY5YSX/GZ+nETBlytcDyw==
+nonexistent.cloudflare.com. 300	IN	NSEC	\000.nonexistent.cloudflare.com. RRSIG NSEC TYPE128
+nonexistent.cloudflare.com. 300	IN	RRSIG	NSEC 13 3 300 20260501011437 20260428231437 34505 cloudflare.com. zv9Fq+HE1lyBRLmerJ4S1NdUA/uG40VLTyeAi3xv61COJXux43y7QbMT YF0vPMnLsrF4Wr99VDRycrGYndIylQ==
+```
+
+## 5. NSEC3 NODATA (direct match, type absent)
+
+`dnskensa.com. AAAA`
+
+```
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 60438
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 0, AUTHORITY: 4, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;dnskensa.com.			IN	AAAA
+
+;; AUTHORITY SECTION:
+dnskensa.com.		300	IN	SOA	mname.dnskensa.com. hostmaster.salesforce.com. 1000013858 43200 3600 3628800 300
+dnskensa.com.		300	IN	RRSIG	SOA 13 2 86400 20260529233003 20260429223003 30165 dnskensa.com. 7vei8PCB3dRcZ0yJFVOKrAlJ/HJBBEBGTsdIv4ePAlrb+eDf3gPkV8VS Vv8BPWJ6a1OhPkniEpHbDZtx/mLpoA==
+TR0OUMQBSM3IL2GRLNPJIJ1V7Q4VFBLL.dnskensa.com. 300 IN NSEC3 1 0 10 73B2182A738FCBC4 UCMU7OFR80NSEKR28ODJ7MJS44HF8S13 NS SOA MX TXT RRSIG DNSKEY NSEC3PARAM
+TR0OUMQBSM3IL2GRLNPJIJ1V7Q4VFBLL.dnskensa.com. 300 IN RRSIG NSEC3 13 3 300 20260529233003 20260429223003 30165 dnskensa.com. JVxV9e7Vm4MIZHkioC4OU7lNK/ZsbW6JRaEdDUKResg8f+DE40trbI1p yJTAUjN7pAnY95cfZ0cibEQROj9ckQ==
+```
+
+## 6. NSEC3 NXDOMAIN (closest encloser proof)
+
+`foo.nxd123.salesforce.com. A`
+
+```
+;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 48956
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 0, AUTHORITY: 8, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;foo.nxd123.salesforce.com.	IN	A
+
+;; AUTHORITY SECTION:
+salesforce.com.		1800	IN	SOA	mastername.salesforce.com. hostmaster.salesforce.com. 2016671173 600 900 2592000 1800
+salesforce.com.		1800	IN	RRSIG	SOA 13 2 1800 20260629000325 20260429230325 2317 salesforce.com. +mojIeBjUQVYMzdyZoelaTkT88k0h5BghL5FhEwrkaJ0aIMBGbuZ7E58 x4WOQqdOFSONx4CUmgwzt4Z3E0L1gA==
+JP1PCI1BBC6Q7F8136EPU4LT4CUEPNTM.salesforce.com. 600 IN	NSEC3 1 0 0 7FEA7B83 JP6FI3JBGQTR23BALRE30LG9UFU3FJHJ A RRSIG
+JP1PCI1BBC6Q7F8136EPU4LT4CUEPNTM.salesforce.com. 600 IN	RRSIG NSEC3 13 3 600 20260513041251 20260401030258 2317 salesforce.com. IAA8rkQRxXP9obGSoGBRZGJJGCLuVFL7XzTBZhWsiXyc731MCjiAqWhO IS7e6Uk9363L1XxcyU163HrWFs0/kg==
+49STKNJU01HOVPN0L8N7MMD35E9VD3VD.salesforce.com. 1800 IN NSEC3 1 0 0 7FEA7B83 49T2A4TT2OHA06O3HB89B4PCF7U0824L A NS SOA MX TXT RRSIG DNSKEY NSEC3PARAM TYPE65534
+49STKNJU01HOVPN0L8N7MMD35E9VD3VD.salesforce.com. 1800 IN RRSIG NSEC3 13 3 1800 20260510095851 20260311090213 2317 salesforce.com. Bq+CTGpZyJlwpkVxpkQRKVDCmM0ka/6wXJQRlPNCXcTtgRX9yivUH5JA P9f3jFbqqrGHIz4Tp02vYbx8SrAqnQ==
+09TD20B1LCISV1SUHEMNIUCF1FGB5K26.salesforce.com. 600 IN	NSEC3 1 0 0 7FEA7B83 09UJ9OKA6O2IRL1I3Q0D193ERNT3P0I6 A RRSIG
+09TD20B1LCISV1SUHEMNIUCF1FGB5K26.salesforce.com. 600 IN	RRSIG NSEC3 13 3 600 20260513041251 20260401030258 2317 salesforce.com. P4CFNufhvK0NpoMLhJCU6Z/ZFUJLmEo5sA3knPYorG6hN8klGnA6DUld KSkgkqc45EXbNTbW04m5Rs9VJQmcGg==
+```
+
+## 7. NSEC3 wildcard-synthesized answer (next closer name cover)
+
+`foo.bar.wild.dnskensa.com. A`
+
+```
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 36546
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 2, AUTHORITY: 2, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;foo.bar.wild.dnskensa.com.	IN	A
+
+;; ANSWER SECTION:
+foo.bar.wild.dnskensa.com. 86400 IN	A	10.1.1.1
+foo.bar.wild.dnskensa.com. 86400 IN	RRSIG	A 13 3 86400 20260529233003 20260429223003 30165 dnskensa.com. TJkCtCyznlVGjubPsugb6c97QUa4m+oBzbXaF5EHWTqx4IRTZdErtCC8 4/JxfHB9Lu/6M8Z28ipV8skKbgyFJg==
+
+;; AUTHORITY SECTION:
+9L83P6QKVPTEMN80B913D2J6GGP6JM1G.dnskensa.com. 300 IN NSEC3 1 0 10 73B2182A738FCBC4 9RDA9L16D8P1H0DUGUF6DG7P1BEO9AN9 A RRSIG
+9L83P6QKVPTEMN80B913D2J6GGP6JM1G.dnskensa.com. 300 IN RRSIG NSEC3 13 3 300 20260529233003 20260429223003 30165 dnskensa.com. KRy/ZgInrV10MMnZu3ePZLlHT7LnHWA/6piRAi77vAlO83NUoxXghsRn gf+1axRLLucbJQm5AQrgRhSywmJmqA==
+```
+
+## 8. NSEC3 wildcard NODATA (wildcard exists but lacks queried type)
+
+`foo.bar.wild.dnskensa.com. AAAA`
+
+```
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 23654
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 0, AUTHORITY: 8, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;foo.bar.wild.dnskensa.com.	IN	AAAA
+
+;; AUTHORITY SECTION:
+dnskensa.com.		300	IN	SOA	mname.dnskensa.com. hostmaster.salesforce.com. 1000013858 43200 3600 3628800 300
+dnskensa.com.		300	IN	RRSIG	SOA 13 2 86400 20260529233003 20260429223003 30165 dnskensa.com. 7vei8PCB3dRcZ0yJFVOKrAlJ/HJBBEBGTsdIv4ePAlrb+eDf3gPkV8VS Vv8BPWJ6a1OhPkniEpHbDZtx/mLpoA==
+9L83P6QKVPTEMN80B913D2J6GGP6JM1G.dnskensa.com. 300 IN NSEC3 1 0 10 73B2182A738FCBC4 9RDA9L16D8P1H0DUGUF6DG7P1BEO9AN9 A RRSIG
+9L83P6QKVPTEMN80B913D2J6GGP6JM1G.dnskensa.com. 300 IN RRSIG NSEC3 13 3 300 20260529233003 20260429223003 30165 dnskensa.com. KRy/ZgInrV10MMnZu3ePZLlHT7LnHWA/6piRAi77vAlO83NUoxXghsRn gf+1axRLLucbJQm5AQrgRhSywmJmqA==
+7KQULCF0O73I9FV70ILDUFBENB41T4F7.dnskensa.com. 300 IN NSEC3 1 0 10 73B2182A738FCBC4 7VGN2C85NQQIGPM5P0IG62V8RCDG9EQT TXT RRSIG
+7KQULCF0O73I9FV70ILDUFBENB41T4F7.dnskensa.com. 300 IN RRSIG NSEC3 13 3 300 20260529233003 20260429223003 30165 dnskensa.com. U0AW2+X9cK7NCqdhJ8P8tPA6py4ih5onX3ti46aoRxrfYpKzr27haCdo YORMvgpXvfo1rBA0GA7WD5MORYTsbA==
+44M20U27KR6ENC8G54V0GFS334SR43QI.dnskensa.com. 300 IN NSEC3 1 0 10 73B2182A738FCBC4 61G7T726UNTHS4ILG3133G8884OTJPM6 A RRSIG
+44M20U27KR6ENC8G54V0GFS334SR43QI.dnskensa.com. 300 IN RRSIG NSEC3 13 3 300 20260529233003 20260429223003 30165 dnskensa.com. Gnm/7bA9rh1MK353Rv+WhkcoS4B3j/jGUnOZPtliXTtRhLFEEltsXyYS nf0o5xyAa7YnLLhGScBSCOXnpNuFaQ==
+```
+
+## 9. CNAME NODATA (same zone, NSEC3 target match)
+
+`www.huque.com. TLSA`
+
+```
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 46659
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 2, AUTHORITY: 4, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;www.huque.com.			IN	TLSA
+
+;; ANSWER SECTION:
+www.huque.com.		300	IN	CNAME	cheetara.huque.com.
+www.huque.com.		300	IN	RRSIG	CNAME 13 3 300 20260506054829 20260421053652 4682 huque.com. jOuOuO8auPC4Afg9EGoHDFOlTHtA2jsn85CD3EkgZe7duyuUW+eqrso1 QNqwjCt0VmTQ26rLkp4aXVFKzqfa+A==
+
+;; AUTHORITY SECTION:
+huque.com.		3600	IN	SOA	mname.huque.com. hostmaster.huque.com. 1000109057 43200 3600 3628800 3600
+huque.com.		3600	IN	RRSIG	SOA 13 2 86400 20260514231701 20260429221701 4682 huque.com. +mie4C1CpaUSDy0xoOP18rjzN2GXIe6BbY1dHLnI2/4YrxOxPuHijTzQ lFLUDbN4yGsC5aiOJKI1gXri8TAIVQ==
+33Q996NVAUKA6LERAAPRR2TTBPO5G2MG.huque.com. 3600 IN NSEC3 1 0 5 9EBA4228 35L9JLOK3CSN300K0FJEHGKPUE4MN3O9 A TXT AAAA SSHFP RRSIG
+33Q996NVAUKA6LERAAPRR2TTBPO5G2MG.huque.com. 3600 IN RRSIG NSEC3 13 3 3600 20260514212831 20260429205044 4682 huque.com. Om7OoMOLawSO4GxdEzX7yUuBZ4PIahFLvYOzNa6/umnSWuXcdtpBeEfh pcoZczFtWu37KnrwWEfzSiFCqB4Aug==
+```
+
+## 10. Wildcard CNAME NODATA (cross-zone; NSEC3 wildcard proof + NSEC target NODATA)
+
+`12345asdfasfadf.horoscope-divination.com. AFSDB`
+
+```
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 8096
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 2, AUTHORITY: 6, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;12345asdfasfadf.horoscope-divination.com. IN AFSDB
+
+;; ANSWER SECTION:
+12345asdfasfadf.horoscope-divination.com. 600 IN CNAME general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com.
+12345asdfasfadf.horoscope-divination.com. 600 IN RRSIG CNAME 13 2 600 20260518030245 20260417013245 24085 horoscope-divination.com. k2E/PY2i/kQeld+K0GzdeW5ZA0kuOMDX2/gMC1E6YfTO0BelOCoSJsVl hxXIyNRmETZIfjLXt55AZyA1ZBBjmQ==
+
+;; AUTHORITY SECTION:
+herokudns.com.		10	IN	SOA	dns1.p05.nsone.net. hostmaster.nsone.net. 1661188672 600 900 1209600 10
+herokudns.com.		10	IN	RRSIG	SOA 13 2 60 20260501011501 20260429231501 12196 herokudns.com. 2sbF3uEJIf3fHXkUF/uaanBvn1wC9Ua/efGl1XK2ODPGead7l/QNy7x4 2k32jFmu40heRZixwQUbfkJ3wgkPIQ==
+general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com. 10 IN NSEC \000.general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com. A AAAA RRSIG NSEC
+general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com. 10 IN RRSIG NSEC 13 3 10 20260501011501 20260429231501 12196 herokudns.com. 8YBDrfTfiTi5J9M/vXHRcR1u4tJfFK87cFmuRhjuVpLPEmJN/NOcqi/W bdJzqpJAMI/l6bv83W6QzIZ7NU6sJg==
+uoluga2l16m65ielflbnlem2v8cosci6.horoscope-divination.com. 2560	IN NSEC3 1 0 0 D54DF1360676F4B8 28DNC0LB8B15CTN3GTIRT1RJDR0P16R7 A RRSIG
+uoluga2l16m65ielflbnlem2v8cosci6.horoscope-divination.com. 2560	IN RRSIG NSEC3 13 3 2560 20260518030245 20260417013245 24085 horoscope-divination.com. EqpwWSgFyC2f7V9PLw+HElBImBmfuB+zCDjQz8/CnqyrUmCiRMVyJl1m eG/2zj1zZ1HByv7PSvqeq85p6I9EeQ==
+```
