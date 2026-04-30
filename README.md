@@ -37,6 +37,33 @@ record in the authenticated denial proof:
 - For DoH support: `pip install dnspython[doh]`
 
 
+## Testing
+
+The test suite uses canned DNS responses in wire format, so tests run
+instantly and are not affected by live DNS changes.
+
+**Capture test data** (only needed when adding or refreshing test cases):
+
+```
+python3 capture_test_data.py
+```
+
+This queries all 11 test cases via DoH to Cloudflare and saves the raw
+wire bytes to `testdata/`.
+
+**Run the test suite:**
+
+```
+python3 -m unittest test_decode -v
+```
+
+Or with pytest if installed:
+
+```
+python3 -m pytest test_decode.py -v
+```
+
+
 ## Sample Output
 
 NSEC3 NODATA
