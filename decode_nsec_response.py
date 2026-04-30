@@ -15,6 +15,7 @@ DNS-over-HTTPS to Cloudflare (or a custom server with --doh-server).
 import sys
 import base64
 import argparse
+from collections import namedtuple
 
 import dns.name
 import dns.query
@@ -28,6 +29,9 @@ import dns.dnssec
 DEFAULT_DOH_URL = "https://cloudflare-dns.com/dns-query"
 
 NXNAME_TYPE = 128
+
+CEProof = namedtuple('CEProof', ['ce_name', 'ce_rec', 'ncn_name', 'ncn_hash',
+                                 'ncn_rec', 'wc_name', 'wc_hash', 'wc_rec'])
 
 
 def query_dns(qname, rdtype, doh_url=None, resolver_ip=None):
@@ -84,13 +88,6 @@ def nsec3_hash_name(name, salt_hex, iterations):
     else:
         salt = bytes.fromhex(salt_hex)
     return dns.dnssec.nsec3_hash(name, salt, iterations, 'SHA1')
-
-
-def canonical_order_less(name1, name2, origin):
-    """Compare two names in DNS canonical order within a zone."""
-    rel1 = name1.relativize(origin)
-    rel2 = name2.relativize(origin)
-    return rel1.canonicalize() < rel2.canonicalize()
 
 
 def nsec_covers(owner, nxt, target, origin):
@@ -178,6 +175,122 @@ def get_nsec3_params(rdata):
     """Extract NSEC3 parameters from an NSEC3 rdata."""
     salt_hex = rdata.salt.hex().upper() if rdata.salt else '-'
     return rdata.algorithm, rdata.flags, rdata.iterations, salt_hex
+
+
+def print_nsec3_params(nsec3_records):
+    """Print NSEC3 parameters and return (salt_hex, iterations)."""
+    params = get_nsec3_params(nsec3_records[0][4])
+    algo, _, iterations, salt_hex = params
+    salt_display = salt_hex if salt_hex != '-' else '(empty)'
+    print(f"NSEC3 params: algorithm {algo}, iterations {iterations}, "
+          f"salt {salt_display}")
+    return salt_hex, iterations
+
+
+def print_nsec3_record(owner_hash, next_hash, types, rdata):
+    """Print an NSEC3 record's hash range and type bitmap."""
+    opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
+    print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
+    print(f"    Type bitmap: [{format_types(types)}]")
+
+
+def print_nsec3_optout(rdata):
+    """Print opt-out notice if the NSEC3 flag is set."""
+    if rdata.flags & 0x01:
+        print(f"    Opt-out flag set: unsigned delegations may "
+              f"exist within this range.")
+
+
+def find_nsec3_ce_proof(qname, nsec3_records, zone, salt_hex, iterations,
+                        wc_mode='cover'):
+    """Walk from zone apex toward qname to find the NSEC3 closest encloser proof.
+
+    wc_mode controls how the wildcard at CE is matched:
+      'cover' — look for an NSEC3 that covers H(*.CE) (NXDOMAIN)
+      'match' — look for an NSEC3 whose owner matches H(*.CE) (wildcard NODATA)
+
+    Returns a CEProof namedtuple or None."""
+    candidates = []
+    name = qname
+    while name.is_subdomain(zone):
+        candidates.append(name)
+        name = name.parent()
+
+    for candidate in reversed(candidates):
+        h_candidate = nsec3_hash_name(candidate, salt_hex, iterations)
+        for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
+            if owner_hash != h_candidate:
+                continue
+
+            ce_rec = (owner_name, owner_hash, next_hash, types, rdata)
+            idx = candidates.index(candidate) - 1
+            if idx < 0:
+                return CEProof(candidate, ce_rec, None, None, None,
+                               None, None, None)
+
+            rel = qname.relativize(candidate)
+            ncn_name = dns.name.Name((rel.labels[-1],) + candidate.labels)
+            h_ncn = nsec3_hash_name(ncn_name, salt_hex, iterations)
+            wc_name = dns.name.Name((b'*',) + candidate.labels)
+            h_wc = nsec3_hash_name(wc_name, salt_hex, iterations)
+
+            ncn_rec = None
+            wc_rec = None
+            for on, oh, nh, ty, rd in nsec3_records:
+                if ncn_rec is None:
+                    covers, _ = nsec3_covers(oh, nh, h_ncn)
+                    if covers:
+                        ncn_rec = (on, oh, nh, ty, rd)
+                if wc_rec is None:
+                    if wc_mode == 'cover':
+                        covers_wc, _ = nsec3_covers(oh, nh, h_wc)
+                        if covers_wc:
+                            wc_rec = (on, oh, nh, ty, rd)
+                    elif wc_mode == 'match' and oh == h_wc:
+                        wc_rec = (on, oh, nh, ty, rd)
+
+            return CEProof(candidate, ce_rec, ncn_name, h_ncn, ncn_rec,
+                           wc_name, h_wc, wc_rec)
+
+    return None
+
+
+def explain_nsec_cdoe(qname, nxt, types):
+    """Detect and explain NSEC Compact Denial of Existence (RFC 9824)."""
+    cdoe_next = dns.name.Name((b'\x00',) + qname.labels)
+    if nxt != cdoe_next:
+        return
+    nxname = NXNAME_TYPE in types
+    real_types = types - {dns.rdatatype.RRSIG, dns.rdatatype.NSEC, NXNAME_TYPE}
+    if nxname:
+        print(f"\n    Pattern: Compact Denial of Existence (RFC 9824)")
+        print(f"    Next name = \\000.{qname} (CDoE signature)")
+        print(f"    NXNAME (TYPE128) present — name does not exist")
+    elif not real_types:
+        print(f"\n    Pattern: Compact Denial of Existence (RFC 9824)")
+        print(f"    Next name = \\000.{qname} (CDoE signature)")
+        print(f"    Bitmap has no real types — likely CDoE without NXNAME")
+    else:
+        print(f"\n    Next name = \\000.{qname}")
+        print(f"    This name has children in the zone; the \\000 child "
+              f"label ensures the NSEC")
+        print(f"    range does not cover existing child names.")
+
+
+def explain_nsec3_cdoe(types):
+    """Detect and explain NSEC3 Compact Denial of Existence (RFC 9824 Section 4)."""
+    cdoe_types = types - {dns.rdatatype.RRSIG, dns.rdatatype.NSEC3}
+    has_nxname = NXNAME_TYPE in cdoe_types
+    is_minimal = cdoe_types <= {NXNAME_TYPE}
+    if not is_minimal:
+        return
+    print(f"\n    Pattern: Compact Denial of Existence with NSEC3 "
+          f"(RFC 9824 Section 4)")
+    if has_nxname:
+        print(f"    NXNAME (TYPE128) present — name does not exist")
+    else:
+        print(f"    Minimal bitmap (no real types) — likely CDoE "
+              f"without NXNAME")
 
 
 def has_answer_data(response):
@@ -298,31 +411,7 @@ def explain_nsec_nodata(qname, qtype, nsec_records, zone):
                 print(f"    The type bitmap does not include {qtype}, "
                       f"proving no {qtype} record exists at this name.")
 
-            cdoe_next = dns.name.Name((b'\x00',) + qname.labels)
-            if nxt == cdoe_next:
-                nxname = NXNAME_TYPE in types
-                real_types = types - {dns.rdatatype.RRSIG,
-                                      dns.rdatatype.NSEC, NXNAME_TYPE}
-                if nxname:
-                    print(f"\n    Pattern: Compact Denial of Existence "
-                          f"(RFC 9824)")
-                    print(f"    Next name = \\000.{qname} (CDoE "
-                          f"signature)")
-                    print(f"    NXNAME (TYPE128) present — name does "
-                          f"not exist")
-                elif not real_types:
-                    print(f"\n    Pattern: Compact Denial of Existence "
-                          f"(RFC 9824)")
-                    print(f"    Next name = \\000.{qname} (CDoE "
-                          f"signature)")
-                    print(f"    Bitmap has no real types — likely "
-                          f"CDoE without NXNAME")
-                else:
-                    print(f"\n    Next name = \\000.{qname}")
-                    print(f"    This name has children in the zone; "
-                          f"the \\000 child label ensures the NSEC")
-                    print(f"    range does not cover existing child "
-                          f"names.")
+            explain_nsec_cdoe(qname, nxt, types)
         else:
             if str(owner.labels[0], errors='replace') == '*':
                 wc_parent = dns.name.Name(owner.labels[1:])
@@ -473,9 +562,7 @@ def explain_nsec3_nodata(qname, qtype_str, nsec3_records, zone,
     if exact_match:
         print(f"\nNODATA: {qname} exists but has no {qtype_str} record.")
         for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
-            opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
-            print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
-            print(f"    Type bitmap: [{format_types(types)}]")
+            print_nsec3_record(owner_hash, next_hash, types, rdata)
 
             if owner_hash == h_qname:
                 print(f"\n    Role: Matches H({qname})")
@@ -489,24 +576,9 @@ def explain_nsec3_nodata(qname, qtype_str, nsec3_records, zone,
                               f"{qtype_str}, proving no {qtype_str} "
                               f"record exists at this name.")
 
-                cdoe_types = types - {dns.rdatatype.RRSIG,
-                                      dns.rdatatype.NSEC3}
-                has_nxname = NXNAME_TYPE in cdoe_types
-                is_minimal = cdoe_types <= {NXNAME_TYPE}
+                explain_nsec3_cdoe(types)
 
-                if is_minimal:
-                    print(f"\n    Pattern: Compact Denial of Existence "
-                          f"with NSEC3 (RFC 9824 Section 4)")
-                    if has_nxname:
-                        print(f"    NXNAME (TYPE128) present — name "
-                              f"does not exist")
-                    else:
-                        print(f"    Minimal bitmap (no real types) — "
-                              f"likely CDoE without NXNAME")
-
-            if rdata.flags & 0x01:
-                print(f"    Opt-out flag set: unsigned delegations may "
-                      f"exist within this range.")
+            print_nsec3_optout(rdata)
         return
 
     _explain_nsec3_wildcard_nodata(
@@ -519,83 +591,42 @@ def _explain_nsec3_wildcard_nodata(qname, qtype_str, qtype_num,
                                    iterations, h_qname):
     """Explain NSEC3 wildcard NODATA: qname doesn't exist, a wildcard
     matched, but the wildcard lacks the queried type."""
-    candidates = []
-    name = qname
-    while name.is_subdomain(zone):
-        candidates.append(name)
-        name = name.parent()
+    proof = find_nsec3_ce_proof(qname, nsec3_records, zone, salt_hex,
+                                iterations, wc_mode='match')
 
-    ce_found = None
-    ce_name = None
-    ncn_found = None
-    wc_found = None
-
-    for candidate in reversed(candidates):
-        h_candidate = nsec3_hash_name(candidate, salt_hex, iterations)
-        for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
-            if owner_hash == h_candidate:
-                ce_found = (owner_name, owner_hash, next_hash, types, rdata)
-                ce_name = candidate
-
-                ncn_idx = candidates.index(candidate) - 1
-                if ncn_idx >= 0:
-                    rel = qname.relativize(candidate)
-                    ncn_name = dns.name.Name(
-                        (rel.labels[-1],) + candidate.labels)
-                    h_ncn = nsec3_hash_name(ncn_name, salt_hex, iterations)
-
-                    wc_test = dns.name.Name((b'*',) + candidate.labels)
-                    h_wc = nsec3_hash_name(wc_test, salt_hex, iterations)
-
-                    for on, oh, nh, ty, rd in nsec3_records:
-                        covers, _ = nsec3_covers(oh, nh, h_ncn)
-                        if covers:
-                            ncn_found = (on, oh, nh, ty, rd,
-                                         ncn_name, h_ncn)
-                        if oh == h_wc:
-                            wc_found = (on, oh, nh, ty, rd,
-                                        wc_test, h_wc)
-                break
-
-    if ce_name:
-        rel = qname.relativize(ce_name)
-        ncn_full = dns.name.Name((rel.labels[-1],) + ce_name.labels)
-        wc_at_ce = dns.name.Name((b'*',) + ce_name.labels)
-        h_wc_ce = nsec3_hash_name(wc_at_ce, salt_hex, iterations)
+    if proof and proof.ce_name:
         print(f"\n  Wildcard NODATA: {qname} does not exist, but "
-              f"{wc_at_ce} matched.")
+              f"{proof.wc_name} matched.")
         print(f"  The wildcard lacks a {qtype_str} record.")
-        print(f"\n  Closest encloser: {ce_name}")
-        print(f"  Next closer name: {ncn_full}")
-        print(f"  Wildcard at CE:   {wc_at_ce}")
-        if ncn_found:
-            print(f"  H({ncn_found[5]}) = {ncn_found[6]}")
-        print(f"  H({wc_at_ce}) = {h_wc_ce}")
+        print(f"\n  Closest encloser: {proof.ce_name}")
+        print(f"  Next closer name: {proof.ncn_name}")
+        print(f"  Wildcard at CE:   {proof.wc_name}")
+        if proof.ncn_rec:
+            print(f"  H({proof.ncn_name}) = {proof.ncn_hash}")
+        print(f"  H({proof.wc_name}) = {proof.wc_hash}")
 
     for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
-        opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
-        print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
-        print(f"    Type bitmap: [{format_types(types)}]")
+        print_nsec3_record(owner_hash, next_hash, types, rdata)
 
-        if ce_found and owner_hash == ce_found[1]:
-            print(f"\n    Role: Matches H({ce_name}) — closest encloser "
-                  f"proof")
-            print(f"    Proves {ce_name} exists in the zone.")
+        if proof and proof.ce_rec and owner_hash == proof.ce_rec[1]:
+            print(f"\n    Role: Matches H({proof.ce_name}) — closest "
+                  f"encloser proof")
+            print(f"    Proves {proof.ce_name} exists in the zone.")
 
-        elif ncn_found and owner_hash == ncn_found[1] \
-                and next_hash == ncn_found[2]:
-            ncn_name = ncn_found[5]
-            h_ncn = ncn_found[6]
-            _, wraparound = nsec3_covers(owner_hash, next_hash, h_ncn)
+        elif proof and proof.ncn_rec \
+                and owner_hash == proof.ncn_rec[1] \
+                and next_hash == proof.ncn_rec[2]:
+            _, wraparound = nsec3_covers(owner_hash, next_hash,
+                                         proof.ncn_hash)
             wrap_note = " (wrap-around)" if wraparound else ""
-            print(f"\n    Role: Covers H({ncn_name}) — next closer "
+            print(f"\n    Role: Covers H({proof.ncn_name}) — next closer "
                   f"name cover{wrap_note}")
-            print(f"    Proves {ncn_name} does not exist, so the "
+            print(f"    Proves {proof.ncn_name} does not exist, so the "
                   f"wildcard applies.")
 
-        elif wc_found and owner_hash == wc_found[1]:
-            wc_n = wc_found[5]
-            print(f"\n    Role: Matches H({wc_n}) — wildcard match")
+        elif proof and proof.wc_rec and owner_hash == proof.wc_rec[1]:
+            print(f"\n    Role: Matches H({proof.wc_name}) — wildcard "
+                  f"match")
             if isinstance(qtype_str, str):
                 if qtype_num in types:
                     print(f"    NOTE: {qtype_str} IS present in the "
@@ -612,87 +643,36 @@ def _explain_nsec3_wildcard_nodata(qname, qtype_str, qtype_num,
                 wrap_note = " (wrap-around)" if wraparound else ""
                 print(f"\n    Role: Covers H({qname}){wrap_note}")
 
-        if rdata.flags & 0x01:
-            print(f"    Opt-out flag set: unsigned delegations may "
-                  f"exist within this range.")
+        print_nsec3_optout(rdata)
 
 
 def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
     """Explain NSEC3 records in an NXDOMAIN response."""
     h_qname = nsec3_hash_name(qname, salt_hex, iterations)
+    proof = find_nsec3_ce_proof(qname, nsec3_records, zone, salt_hex,
+                                iterations, wc_mode='cover')
 
-    candidates = []
-    name = qname
-    while name.is_subdomain(zone):
-        candidates.append(name)
-        name = name.parent()
+    if proof and proof.ce_name:
+        h_ce = nsec3_hash_name(proof.ce_name, salt_hex, iterations)
+        print(f"\n  Closest encloser: {proof.ce_name}")
+        print(f"  Next closer name: {proof.ncn_name}")
+        print(f"  Wildcard at CE:   {proof.wc_name}")
+        print(f"  H({proof.ce_name}) = {h_ce}")
+        print(f"  H({proof.ncn_name}) = {proof.ncn_hash}")
+        print(f"  H({proof.wc_name}) = {proof.wc_hash}")
 
-    ce_found = None
-    ce_name = None
-    ncn_found = None
-    wc_found = None
-    wc_name = None
-
-    for candidate in reversed(candidates):
-        h_candidate = nsec3_hash_name(candidate, salt_hex, iterations)
-        for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
-            if owner_hash == h_candidate:
-                ce_found = (owner_name, owner_hash, next_hash, types, rdata)
-                ce_name = candidate
-
-                ncn_idx = candidates.index(candidate) - 1
-                if ncn_idx >= 0:
-                    ncn_name = candidates[ncn_idx]
-                    h_ncn = nsec3_hash_name(ncn_name, salt_hex, iterations)
-                    wc_test = dns.name.Name((b'*',) + candidate.labels)
-                    h_wc = nsec3_hash_name(wc_test, salt_hex, iterations)
-
-                    for on, oh, nh, ty, rd in nsec3_records:
-                        covers, _ = nsec3_covers(oh, nh, h_ncn)
-                        if covers:
-                            ncn_found = (on, oh, nh, ty, rd, ncn_name, h_ncn)
-                        covers_wc, _ = nsec3_covers(oh, nh, h_wc)
-                        if covers_wc:
-                            wc_found = (on, oh, nh, ty, rd,
-                                        wc_test, h_wc)
-                break
-
-    if ce_name:
-        rel = qname.relativize(ce_name)
-        ncn_full = dns.name.Name((rel.labels[-1],) + ce_name.labels)
-        wc_at_ce = dns.name.Name((b'*',) + ce_name.labels)
-        h_ce = nsec3_hash_name(ce_name, salt_hex, iterations)
-        h_ncn_full = nsec3_hash_name(ncn_full, salt_hex, iterations)
-        h_wc_ce = nsec3_hash_name(wc_at_ce, salt_hex, iterations)
-        print(f"\n  Closest encloser: {ce_name}")
-        print(f"  Next closer name: {ncn_full}")
-        print(f"  Wildcard at CE:   {wc_at_ce}")
-        print(f"  H({ce_name}) = {h_ce}")
-        print(f"  H({ncn_full}) = {h_ncn_full}")
-        print(f"  H({wc_at_ce}) = {h_wc_ce}")
-
-    def _print_nsec3(owner_name, owner_hash, next_hash, types, rdata):
-        opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
-        print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
-        print(f"    Type bitmap: [{format_types(types)}]")
-
-    def _print_optout(rdata):
-        if rdata.flags & 0x01:
-            print(f"    Opt-out flag set: unsigned delegations may "
-                  f"exist within this range.")
-
-    if ce_found:
+    if proof and proof.ce_rec:
         ordered = []
         remaining = []
         for rec in nsec3_records:
             owner_name, owner_hash, next_hash, types, rdata = rec
-            if owner_hash == ce_found[1]:
+            if owner_hash == proof.ce_rec[1]:
                 ordered.insert(0, rec)
-            elif ncn_found and owner_hash == ncn_found[1] \
-                    and next_hash == ncn_found[2]:
+            elif proof.ncn_rec and owner_hash == proof.ncn_rec[1] \
+                    and next_hash == proof.ncn_rec[2]:
                 ordered.insert(1 if len(ordered) >= 1 else 0, rec)
-            elif wc_found and owner_hash == wc_found[1] \
-                    and next_hash == wc_found[2]:
+            elif proof.wc_rec and owner_hash == proof.wc_rec[1] \
+                    and next_hash == proof.wc_rec[2]:
                 ordered.append(rec)
             else:
                 remaining.append(rec)
@@ -707,39 +687,35 @@ def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
                   f"other names exist in the zone.")
 
         for owner_name, owner_hash, next_hash, types, rdata in ordered:
-            _print_nsec3(owner_name, owner_hash, next_hash, types, rdata)
+            print_nsec3_record(owner_hash, next_hash, types, rdata)
 
             matched = False
-            if owner_hash == ce_found[1]:
+            if owner_hash == proof.ce_rec[1]:
                 matched = True
-                print(f"\n    Role: Matches H({ce_name}) — closest "
+                print(f"\n    Role: Matches H({proof.ce_name}) — closest "
                       f"encloser proof")
-                print(f"    Proves {ce_name} exists in the zone.")
+                print(f"    Proves {proof.ce_name} exists in the zone.")
 
-            if ncn_found and owner_hash == ncn_found[1] \
-                    and next_hash == ncn_found[2]:
+            if proof.ncn_rec and owner_hash == proof.ncn_rec[1] \
+                    and next_hash == proof.ncn_rec[2]:
                 matched = True
-                ncn_name = ncn_found[5]
-                h_ncn = ncn_found[6]
                 _, wraparound = nsec3_covers(
-                    owner_hash, next_hash, h_ncn)
+                    owner_hash, next_hash, proof.ncn_hash)
                 wrap_note = " (wrap-around)" if wraparound else ""
-                print(f"\n    Role: Covers H({ncn_name}) — next closer "
-                      f"name cover{wrap_note}")
-                print(f"    Proves {ncn_name} does not exist.")
+                print(f"\n    Role: Covers H({proof.ncn_name}) — next "
+                      f"closer name cover{wrap_note}")
+                print(f"    Proves {proof.ncn_name} does not exist.")
 
-            if wc_found and owner_hash == wc_found[1] \
-                    and next_hash == wc_found[2]:
+            if proof.wc_rec and owner_hash == proof.wc_rec[1] \
+                    and next_hash == proof.wc_rec[2]:
                 matched = True
-                wc_n = wc_found[5]
-                h_wc = wc_found[6]
                 _, wraparound = nsec3_covers(
-                    owner_hash, next_hash, h_wc)
+                    owner_hash, next_hash, proof.wc_hash)
                 wrap_note = " (wrap-around)" if wraparound else ""
-                print(f"\n    Role: Covers H({wc_n}) — wildcard "
+                print(f"\n    Role: Covers H({proof.wc_name}) — wildcard "
                       f"cover{wrap_note}")
                 print(f"    Proves no wildcard exists at the closest "
-                      f"encloser ({ce_name}),")
+                      f"encloser ({proof.ce_name}),")
                 print(f"    so no wildcard synthesis can produce an "
                       f"answer.")
 
@@ -750,9 +726,9 @@ def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
                     wrap_note = " (wrap-around)" if wraparound else ""
                     print(f"\n    Role: Covers H({qname}){wrap_note}")
 
-            _print_optout(rdata)
+            print_nsec3_optout(rdata)
 
-    if not ce_found:
+    if not proof or not proof.ce_rec:
         print(f"\n  NOTE: Could not identify closest encloser match.")
         print(f"  Showing raw NSEC3 coverage analysis:")
         for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
@@ -796,9 +772,7 @@ def explain_nsec3_wildcard(qname, nsec3_records, zone, salt_hex, iterations):
         print(f"  H({ncn_name}) = {h_ncn}")
 
     for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
-        opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
-        print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
-        print(f"    Type bitmap: [{format_types(types)}]")
+        print_nsec3_record(owner_hash, next_hash, types, rdata)
 
         if ncn_match and owner_hash == ncn_match[0] \
                 and next_hash == ncn_match[1]:
@@ -818,9 +792,7 @@ def explain_nsec3_wildcard(qname, nsec3_records, zone, salt_hex, iterations):
                 wrap_note = " (wrap-around)" if wraparound else ""
                 print(f"\n    Role: Covers H({qname}){wrap_note}")
 
-        if rdata.flags & 0x01:
-            print(f"    Opt-out flag set: unsigned delegations may "
-                  f"exist within this range.")
+        print_nsec3_optout(rdata)
 
 
 def explain_nsec3_referral(qname, nsec3_records, zone, salt_hex, iterations):
@@ -837,9 +809,7 @@ def explain_nsec3_referral(qname, nsec3_records, zone, salt_hex, iterations):
     print(f"\n  H({delegation_name}) = {h_deleg}")
 
     for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
-        opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
-        print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
-        print(f"    Type bitmap: [{format_types(types)}]")
+        print_nsec3_record(owner_hash, next_hash, types, rdata)
 
         if owner_hash == h_deleg:
             if dns.rdatatype.DS not in types:
@@ -856,9 +826,7 @@ def explain_nsec3_referral(qname, nsec3_records, zone, salt_hex, iterations):
                 print(f"    Proves no DS record exists for this "
                       f"delegation.")
 
-        if rdata.flags & 0x01:
-            print(f"    Opt-out flag set: unsigned delegations may "
-                  f"exist within this range.")
+        print_nsec3_optout(rdata)
 
 
 def get_rrsig_signer(response, owner_name, rdtype):
@@ -922,11 +890,7 @@ def explain_cname_nodata(qname, qtype_str, cname_chain, target,
                 _explain_nsec_wildcard_cname(
                     qname, wildcard, owner_nsec, wc_zone)
             elif owner_nsec3:
-                params = get_nsec3_params(owner_nsec3[0][4])
-                _, _, iterations, salt_hex = params
-                salt_display = salt_hex if salt_hex != '-' else '(empty)'
-                print(f"  NSEC3 params: algorithm {params[0]}, "
-                      f"iterations {iterations}, salt {salt_display}")
+                salt_hex, iterations = print_nsec3_params(owner_nsec3)
                 _explain_nsec3_wildcard_cname(
                     qname, wildcard, owner_nsec3, wc_zone,
                     salt_hex, iterations)
@@ -937,11 +901,7 @@ def explain_cname_nodata(qname, qtype_str, cname_chain, target,
             _explain_nsec_cname_nodata(target, qtype_str, z_nsec,
                                        zone_name)
         if z_nsec3:
-            params = get_nsec3_params(z_nsec3[0][4])
-            _, _, iterations, salt_hex = params
-            salt_display = salt_hex if salt_hex != '-' else '(empty)'
-            print(f"  NSEC3 params: algorithm {params[0]}, "
-                  f"iterations {iterations}, salt {salt_display}")
+            salt_hex, iterations = print_nsec3_params(z_nsec3)
             _explain_nsec3_cname_nodata(target, qtype_str, z_nsec3,
                                         zone_name, salt_hex, iterations)
 
@@ -976,9 +936,7 @@ def _explain_nsec3_wildcard_cname(qname, wildcard, nsec3_records, zone,
     print(f"  H({ncn}) = {h_ncn}")
 
     for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
-        opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
-        print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
-        print(f"    Type bitmap: [{format_types(types)}]")
+        print_nsec3_record(owner_hash, next_hash, types, rdata)
 
         covers, wraparound = nsec3_covers(owner_hash, next_hash, h_ncn)
         if covers:
@@ -996,9 +954,7 @@ def _explain_nsec3_wildcard_cname(qname, wildcard, nsec3_records, zone,
                 wrap_note = " (wrap-around)" if wrap2 else ""
                 print(f"\n    Role: Covers H({qname}){wrap_note}")
 
-        if rdata.flags & 0x01:
-            print(f"    Opt-out flag set: unsigned delegations may "
-                  f"exist within this range.")
+        print_nsec3_optout(rdata)
 
 
 def _explain_nsec_cname_nodata(target, qtype_str, nsec_records, zone):
@@ -1036,9 +992,7 @@ def _explain_nsec3_cname_nodata(target, qtype_str, nsec3_records, zone,
     print(f"\n  H({target}) = {h_target}")
 
     for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
-        opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
-        print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
-        print(f"    Type bitmap: [{format_types(types)}]")
+        print_nsec3_record(owner_hash, next_hash, types, rdata)
 
         if owner_hash == h_target:
             print(f"\n    Role: Matches H({target}) — the CNAME target")
@@ -1049,18 +1003,7 @@ def _explain_nsec3_cname_nodata(target, qtype_str, nsec3_records, zone,
                 print(f"    The type bitmap does not include {qtype_str}, "
                       f"proving no {qtype_str} record exists at {target}.")
 
-            cdoe_types = types - {dns.rdatatype.RRSIG, dns.rdatatype.NSEC3}
-            has_nxname = NXNAME_TYPE in cdoe_types
-            is_minimal = cdoe_types <= {NXNAME_TYPE}
-            if is_minimal:
-                print(f"\n    Pattern: Compact Denial of Existence "
-                      f"with NSEC3 (RFC 9824 Section 4)")
-                if has_nxname:
-                    print(f"    NXNAME (TYPE128) present — name does "
-                          f"not exist")
-                else:
-                    print(f"    Minimal bitmap (no real types) — "
-                          f"likely CDoE without NXNAME")
+            explain_nsec3_cdoe(types)
         else:
             covers, wraparound = nsec3_covers(
                 owner_hash, next_hash, h_target)
@@ -1068,9 +1011,7 @@ def _explain_nsec3_cname_nodata(target, qtype_str, nsec3_records, zone,
                 wrap_note = " (wrap-around)" if wraparound else ""
                 print(f"\n    Role: Covers H({target}){wrap_note}")
 
-        if rdata.flags & 0x01:
-            print(f"    Opt-out flag set: unsigned delegations may "
-                  f"exist within this range.")
+        print_nsec3_optout(rdata)
 
 
 def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
@@ -1126,11 +1067,7 @@ def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
             explain_nsec_referral(qname, nsec_records, zone)
 
     elif nsec3_records:
-        params = get_nsec3_params(nsec3_records[0][4])
-        algo, flags, iterations, salt_hex = params
-        salt_display = salt_hex if salt_hex != '-' else '(empty)'
-        print(f"NSEC3 params: algorithm {algo}, iterations {iterations}, "
-              f"salt {salt_display}")
+        salt_hex, iterations = print_nsec3_params(nsec3_records)
 
         if rcode == dns.rcode.NXDOMAIN:
             print(f"\nNXDOMAIN: {qname} does not exist.")
