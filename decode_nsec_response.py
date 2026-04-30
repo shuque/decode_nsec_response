@@ -620,7 +620,6 @@ def _explain_nsec3_wildcard_nodata(qname, qtype_str, qtype_num,
 def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
     """Explain NSEC3 records in an NXDOMAIN response."""
     h_qname = nsec3_hash_name(qname, salt_hex, iterations)
-    print(f"\n  H({qname}) = {h_qname}")
 
     candidates = []
     name = qname
@@ -661,57 +660,85 @@ def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
     if ce_name:
         rel = qname.relativize(ce_name)
         ncn_full = dns.name.Name((rel.labels[-1],) + ce_name.labels)
+        wc_at_ce = dns.name.Name((b'*',) + ce_name.labels)
+        h_ce = nsec3_hash_name(ce_name, salt_hex, iterations)
+        h_ncn_full = nsec3_hash_name(ncn_full, salt_hex, iterations)
+        h_wc_ce = nsec3_hash_name(wc_at_ce, salt_hex, iterations)
         print(f"\n  Closest encloser: {ce_name}")
         print(f"  Next closer name: {ncn_full}")
-        wc_at_ce = dns.name.Name((b'*',) + ce_name.labels)
         print(f"  Wildcard at CE:   {wc_at_ce}")
-        h_wc_ce = nsec3_hash_name(wc_at_ce, salt_hex, iterations)
+        print(f"  H({ce_name}) = {h_ce}")
+        print(f"  H({ncn_full}) = {h_ncn_full}")
         print(f"  H({wc_at_ce}) = {h_wc_ce}")
-        if ncn_found:
-            print(f"  H({ncn_found[5]}) = {ncn_found[6]}")
 
-    for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
+    def _print_nsec3(owner_name, owner_hash, next_hash, types, rdata):
         opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
         print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
         print(f"    Type bitmap: [{format_types(types)}]")
 
-        if ce_found and owner_hash == ce_found[1]:
-            print(f"\n    Role: Matches H({ce_name}) — closest encloser "
-                  f"proof")
-            print(f"    Proves {ce_name} exists in the zone.")
-
-        elif ncn_found and owner_hash == ncn_found[1] \
-                and next_hash == ncn_found[2]:
-            ncn_name = ncn_found[5]
-            h_ncn = ncn_found[6]
-            _, wraparound = nsec3_covers(owner_hash, next_hash, h_ncn)
-            wrap_note = " (wrap-around)" if wraparound else ""
-            print(f"\n    Role: Covers H({ncn_name}) — next closer name "
-                  f"cover{wrap_note}")
-            print(f"    Proves {ncn_name} does not exist.")
-
-        elif wc_found and owner_hash == wc_found[1] \
-                and next_hash == wc_found[2]:
-            wc_n = wc_found[5]
-            h_wc = wc_found[6]
-            _, wraparound = nsec3_covers(owner_hash, next_hash, h_wc)
-            wrap_note = " (wrap-around)" if wraparound else ""
-            print(f"\n    Role: Covers H({wc_n}) — wildcard "
-                  f"cover{wrap_note}")
-            print(f"    Proves no wildcard exists at the closest "
-                  f"encloser ({ce_name}),")
-            print(f"    so no wildcard synthesis can produce an answer.")
-
-        else:
-            covers, wraparound = nsec3_covers(
-                owner_hash, next_hash, h_qname)
-            if covers:
-                wrap_note = " (wrap-around)" if wraparound else ""
-                print(f"\n    Role: Covers H({qname}){wrap_note}")
-
+    def _print_optout(rdata):
         if rdata.flags & 0x01:
             print(f"    Opt-out flag set: unsigned delegations may "
                   f"exist within this range.")
+
+    if ce_found:
+        ordered = []
+        remaining = []
+        for rec in nsec3_records:
+            owner_name, owner_hash, next_hash, types, rdata = rec
+            if owner_hash == ce_found[1]:
+                ordered.insert(0, rec)
+            elif ncn_found and owner_hash == ncn_found[1] \
+                    and next_hash == ncn_found[2]:
+                ordered.insert(1 if len(ordered) >= 1 else 0, rec)
+            elif wc_found and owner_hash == wc_found[1] \
+                    and next_hash == wc_found[2]:
+                ordered.append(rec)
+            else:
+                remaining.append(rec)
+        ordered.extend(remaining)
+
+        for owner_name, owner_hash, next_hash, types, rdata in ordered:
+            _print_nsec3(owner_name, owner_hash, next_hash, types, rdata)
+
+            if owner_hash == ce_found[1]:
+                print(f"\n    Role: Matches H({ce_name}) — closest "
+                      f"encloser proof")
+                print(f"    Proves {ce_name} exists in the zone.")
+
+            elif ncn_found and owner_hash == ncn_found[1] \
+                    and next_hash == ncn_found[2]:
+                ncn_name = ncn_found[5]
+                h_ncn = ncn_found[6]
+                _, wraparound = nsec3_covers(
+                    owner_hash, next_hash, h_ncn)
+                wrap_note = " (wrap-around)" if wraparound else ""
+                print(f"\n    Role: Covers H({ncn_name}) — next closer "
+                      f"name cover{wrap_note}")
+                print(f"    Proves {ncn_name} does not exist.")
+
+            elif wc_found and owner_hash == wc_found[1] \
+                    and next_hash == wc_found[2]:
+                wc_n = wc_found[5]
+                h_wc = wc_found[6]
+                _, wraparound = nsec3_covers(
+                    owner_hash, next_hash, h_wc)
+                wrap_note = " (wrap-around)" if wraparound else ""
+                print(f"\n    Role: Covers H({wc_n}) — wildcard "
+                      f"cover{wrap_note}")
+                print(f"    Proves no wildcard exists at the closest "
+                      f"encloser ({ce_name}),")
+                print(f"    so no wildcard synthesis can produce an "
+                      f"answer.")
+
+            else:
+                covers, wraparound = nsec3_covers(
+                    owner_hash, next_hash, h_qname)
+                if covers:
+                    wrap_note = " (wrap-around)" if wraparound else ""
+                    print(f"\n    Role: Covers H({qname}){wrap_note}")
+
+            _print_optout(rdata)
 
     if not ce_found:
         print(f"\n  NOTE: Could not identify closest encloser match.")
