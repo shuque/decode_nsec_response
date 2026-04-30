@@ -188,6 +188,50 @@ def has_answer_data(response):
     )
 
 
+def get_cname_chain(response, qname):
+    """Follow the CNAME chain in the answer section.
+    Returns (chain, final_target) where chain is a list of (name, target)
+    pairs and final_target is the last target. Returns ([], None) if no CNAME."""
+    cnames = {}
+    for rrset in response.answer:
+        if rrset.rdtype == dns.rdatatype.CNAME:
+            for rdata in rrset:
+                cnames[rrset.name] = rdata.target
+    if not cnames or qname not in cnames:
+        return [], None
+    chain = []
+    current = qname
+    seen = set()
+    while current in cnames and current not in seen:
+        seen.add(current)
+        target = cnames[current]
+        chain.append((current, target))
+        current = target
+    return chain, current
+
+
+def get_wildcard_from_rrsig(response, owner, rdtype):
+    """Check if an RRset was wildcard-synthesized by examining RRSIG labels.
+    Returns the wildcard name if synthesized, None otherwise."""
+    owner_label_count = len(owner) - 1
+    for rrset in response.answer:
+        if rrset.name != owner or rrset.rdtype != dns.rdatatype.RRSIG:
+            continue
+        for rdata in rrset:
+            if rdata.type_covered == rdtype and rdata.labels < owner_label_count:
+                ce = dns.name.Name(owner.labels[-(rdata.labels + 1):])
+                return dns.name.Name((b'*',) + ce.labels)
+    return None
+
+
+def has_non_cname_answer(response):
+    """Check if the answer section has data beyond CNAME/RRSIG records."""
+    return any(
+        rrset.rdtype not in (dns.rdatatype.CNAME, dns.rdatatype.RRSIG)
+        for rrset in response.answer
+    )
+
+
 def is_referral(response):
     """Check if the response is a referral (NS in authority, no answer)."""
     if response.rcode() != dns.rcode.NOERROR:
@@ -778,6 +822,218 @@ def explain_nsec3_referral(qname, nsec3_records, zone, salt_hex, iterations):
                   f"exist within this range.")
 
 
+def get_rrsig_signer(response, owner_name, rdtype):
+    """Get the RRSIG signer name for a given RRset in the authority section."""
+    for rrset in response.authority:
+        if rrset.name == owner_name and rrset.rdtype == dns.rdatatype.RRSIG:
+            for rdata in rrset:
+                if rdata.type_covered == rdtype:
+                    return rdata.signer
+    return None
+
+
+def partition_records_by_zone(nsec_records, nsec3_records, response):
+    """Partition NSEC/NSEC3 records by their zone (RRSIG signer).
+    Returns dict mapping zone_name -> (nsec_list, nsec3_list)."""
+    zones = {}
+    for rec in nsec_records:
+        owner = rec[0]
+        signer = get_rrsig_signer(response, owner, dns.rdatatype.NSEC)
+        if signer:
+            zones.setdefault(signer, ([], []))
+            zones[signer][0].append(rec)
+    for rec in nsec3_records:
+        owner = rec[0]
+        signer = get_rrsig_signer(response, owner, dns.rdatatype.NSEC3)
+        if signer:
+            zones.setdefault(signer, ([], []))
+            zones[signer][1].append(rec)
+    return zones
+
+
+def explain_cname_nodata(qname, qtype_str, cname_chain, target,
+                         nsec_records, nsec3_records, response):
+    """Explain NSEC/NSEC3 records proving the CNAME target lacks the queried type."""
+    cname_src = cname_chain[0][0]
+    wildcard = get_wildcard_from_rrsig(response, cname_src,
+                                       dns.rdatatype.CNAME)
+
+    if wildcard:
+        wc_parent = dns.name.Name(wildcard.labels[1:])
+        print(f"\nWildcard CNAME NODATA: {qname} matched wildcard "
+              f"{wildcard},")
+        print(f"which targets {target}. The target has no {qtype_str} "
+              f"record.")
+    else:
+        print(f"\nCNAME NODATA: {qname} is an alias; the final target "
+              f"{target} has no {qtype_str} record.")
+    for src, dst in cname_chain:
+        print(f"  {src} -> CNAME -> {dst}")
+
+    zone_records = partition_records_by_zone(nsec_records, nsec3_records,
+                                             response)
+
+    if wildcard:
+        wc_zone = dns.name.Name(wildcard.labels[1:])
+        owner_zone_recs = zone_records.pop(wc_zone, None)
+        if owner_zone_recs:
+            owner_nsec, owner_nsec3 = owner_zone_recs
+            print(f"\n  --- Wildcard proof (zone: {wc_zone}) ---")
+            if owner_nsec:
+                _explain_nsec_wildcard_cname(
+                    qname, wildcard, owner_nsec, wc_zone)
+            elif owner_nsec3:
+                params = get_nsec3_params(owner_nsec3[0][4])
+                _, _, iterations, salt_hex = params
+                salt_display = salt_hex if salt_hex != '-' else '(empty)'
+                print(f"  NSEC3 params: algorithm {params[0]}, "
+                      f"iterations {iterations}, salt {salt_display}")
+                _explain_nsec3_wildcard_cname(
+                    qname, wildcard, owner_nsec3, wc_zone,
+                    salt_hex, iterations)
+
+    for zone_name, (z_nsec, z_nsec3) in zone_records.items():
+        print(f"\n  --- NODATA proof (zone: {zone_name}) ---")
+        if z_nsec:
+            _explain_nsec_cname_nodata(target, qtype_str, z_nsec,
+                                       zone_name)
+        if z_nsec3:
+            params = get_nsec3_params(z_nsec3[0][4])
+            _, _, iterations, salt_hex = params
+            salt_display = salt_hex if salt_hex != '-' else '(empty)'
+            print(f"  NSEC3 params: algorithm {params[0]}, "
+                  f"iterations {iterations}, salt {salt_display}")
+            _explain_nsec3_cname_nodata(target, qtype_str, z_nsec3,
+                                        zone_name, salt_hex, iterations)
+
+
+def _explain_nsec_wildcard_cname(qname, wildcard, nsec_records, zone):
+    """Explain NSEC proving the wildcard CNAME was legitimate."""
+    for owner, nxt, types, rdata in nsec_records:
+        print(f"\n  NSEC: {owner} -> {nxt}")
+        print(f"    Type bitmap: [{format_types(types)}]")
+
+        covers, wraparound = nsec_covers(owner, nxt, qname, zone)
+        if covers:
+            wrap_note = " (wrap-around)" if wraparound else ""
+            print(f"\n    Role: Covers the queried name "
+                  f"({qname}){wrap_note}")
+            print(f"    Proves no exact match exists for {qname},")
+            print(f"    validating that the CNAME was synthesized "
+                  f"from {wildcard}.")
+
+
+def _explain_nsec3_wildcard_cname(qname, wildcard, nsec3_records, zone,
+                                  salt_hex, iterations):
+    """Explain NSEC3 proving the wildcard CNAME was legitimate."""
+    wc_parent = dns.name.Name(wildcard.labels[1:])
+    rel = qname.relativize(wc_parent)
+    ncn = dns.name.Name((rel.labels[-1],) + wc_parent.labels)
+    h_ncn = nsec3_hash_name(ncn, salt_hex, iterations)
+
+    print(f"\n  Closest encloser: {wc_parent}")
+    print(f"  Next closer name: {ncn}")
+    print(f"  Wildcard:         {wildcard}")
+    print(f"  H({ncn}) = {h_ncn}")
+
+    for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
+        opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
+        print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
+        print(f"    Type bitmap: [{format_types(types)}]")
+
+        covers, wraparound = nsec3_covers(owner_hash, next_hash, h_ncn)
+        if covers:
+            wrap_note = " (wrap-around)" if wraparound else ""
+            print(f"\n    Role: Covers H({ncn}) — next closer name "
+                  f"cover{wrap_note}")
+            print(f"    Proves no closer match than {wc_parent} exists "
+                  f"for {qname},")
+            print(f"    validating that the CNAME was synthesized "
+                  f"from {wildcard}.")
+        else:
+            h_name = nsec3_hash_name(qname, salt_hex, iterations)
+            covers2, wrap2 = nsec3_covers(owner_hash, next_hash, h_name)
+            if covers2:
+                wrap_note = " (wrap-around)" if wrap2 else ""
+                print(f"\n    Role: Covers H({qname}){wrap_note}")
+
+        if rdata.flags & 0x01:
+            print(f"    Opt-out flag set: unsigned delegations may "
+                  f"exist within this range.")
+
+
+def _explain_nsec_cname_nodata(target, qtype_str, nsec_records, zone):
+    """Explain NSEC proving the CNAME target lacks the queried type."""
+    qtype_num = dns.rdatatype.from_text(qtype_str) \
+        if isinstance(qtype_str, str) else qtype_str
+
+    for owner, nxt, types, rdata in nsec_records:
+        print(f"\n  NSEC: {owner} -> {nxt}")
+        print(f"    Type bitmap: [{format_types(types)}]")
+
+        if owner == target:
+            print(f"\n    Role: Matches the CNAME target ({target})")
+            if qtype_num in types:
+                print(f"    NOTE: {qtype_str} IS present in the bitmap — "
+                      f"unexpected for NODATA")
+            else:
+                print(f"    The type bitmap does not include {qtype_str}, "
+                      f"proving no {qtype_str} record exists at {target}.")
+        else:
+            if zone:
+                covers, wraparound = nsec_covers(owner, nxt, target, zone)
+                if covers:
+                    wrap_note = " (wrap-around)" if wraparound else ""
+                    print(f"\n    Role: Covers the CNAME target "
+                          f"({target}){wrap_note}")
+
+
+def _explain_nsec3_cname_nodata(target, qtype_str, nsec3_records, zone,
+                                salt_hex, iterations):
+    """Explain NSEC3 proving the CNAME target lacks the queried type."""
+    qtype_num = dns.rdatatype.from_text(qtype_str) \
+        if isinstance(qtype_str, str) else qtype_str
+    h_target = nsec3_hash_name(target, salt_hex, iterations)
+    print(f"\n  H({target}) = {h_target}")
+
+    for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
+        opt_out = " [OPT-OUT]" if rdata.flags & 0x01 else ""
+        print(f"\n  NSEC3: {owner_hash} -> {next_hash}{opt_out}")
+        print(f"    Type bitmap: [{format_types(types)}]")
+
+        if owner_hash == h_target:
+            print(f"\n    Role: Matches H({target}) — the CNAME target")
+            if qtype_num in types:
+                print(f"    NOTE: {qtype_str} IS present in the bitmap — "
+                      f"unexpected for NODATA")
+            else:
+                print(f"    The type bitmap does not include {qtype_str}, "
+                      f"proving no {qtype_str} record exists at {target}.")
+
+            cdoe_types = types - {dns.rdatatype.RRSIG, dns.rdatatype.NSEC3}
+            has_nxname = NXNAME_TYPE in cdoe_types
+            is_minimal = cdoe_types <= {NXNAME_TYPE}
+            if is_minimal:
+                print(f"\n    Pattern: Compact Denial of Existence "
+                      f"with NSEC3 (RFC 9824 Section 4)")
+                if has_nxname:
+                    print(f"    NXNAME (TYPE128) present — name does "
+                          f"not exist")
+                else:
+                    print(f"    Minimal bitmap (no real types) — "
+                          f"likely CDoE without NXNAME")
+        else:
+            covers, wraparound = nsec3_covers(
+                owner_hash, next_hash, h_target)
+            if covers:
+                wrap_note = " (wrap-around)" if wraparound else ""
+                print(f"\n    Role: Covers H({target}){wrap_note}")
+
+        if rdata.flags & 0x01:
+            print(f"    Opt-out flag set: unsigned delegations may "
+                  f"exist within this range.")
+
+
 def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
     """Main decode routine."""
     qname = dns.name.from_text(qname_str)
@@ -797,11 +1053,22 @@ def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
     if not zone:
         zone = find_zone_from_rrsig(response)
 
+    referral = is_referral(response)
+    has_data = has_answer_data(response)
+    cname_chain, cname_target = get_cname_chain(response, qname)
+    cname_nodata = (cname_chain and rcode == dns.rcode.NOERROR
+                    and not has_non_cname_answer(response)
+                    and (nsec_records or nsec3_records))
+
+    if cname_nodata:
+        explain_cname_nodata(qname, qtype_str, cname_chain, cname_target,
+                             nsec_records, nsec3_records, response)
+        print()
+        return
+
     if zone:
         print(f"Zone: {zone}")
 
-    referral = is_referral(response)
-    has_data = has_answer_data(response)
     wildcard = has_data and rcode == dns.rcode.NOERROR and \
         (nsec_records or nsec3_records)
     nodata = rcode == dns.rcode.NOERROR and not has_data and not referral
