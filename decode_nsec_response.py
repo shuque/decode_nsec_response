@@ -1014,10 +1014,8 @@ def _explain_nsec3_cname_nodata(target, qtype_str, nsec3_records, zone,
         print_nsec3_optout(rdata)
 
 
-def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
-    """Main decode routine."""
-    qname = dns.name.from_text(qname_str)
-    response = query_dns(qname, qtype_str, doh_url, resolver_ip)
+def decode_response(qname, qtype_str, response):
+    """Decode and explain NSEC/NSEC3 records in a DNS response."""
     rcode = response.rcode()
 
     print_header(qname, qtype_str, rcode, response)
@@ -1086,6 +1084,13 @@ def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
                 qname, nsec3_records, zone, salt_hex, iterations)
 
     print()
+
+
+def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
+    """Query DNS and decode the response."""
+    qname = dns.name.from_text(qname_str)
+    response = query_dns(qname, qtype_str, doh_url, resolver_ip)
+    decode_response(qname, qtype_str, response)
 
 
 def main():
