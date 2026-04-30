@@ -652,7 +652,7 @@ def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
                         if covers:
                             ncn_found = (on, oh, nh, ty, rd, ncn_name, h_ncn)
                         covers_wc, _ = nsec3_covers(oh, nh, h_wc)
-                        if covers_wc and oh != owner_hash:
+                        if covers_wc:
                             wc_found = (on, oh, nh, ty, rd,
                                         wc_test, h_wc)
                 break
@@ -698,16 +698,27 @@ def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
                 remaining.append(rec)
         ordered.extend(remaining)
 
+        single_loop = (len(nsec3_records) == 1
+                       and nsec3_records[0][1] == nsec3_records[0][2])
+        if single_loop:
+            print(f"\n  Note: Single NSEC3 record whose owner hash equals "
+                  f"its next hash.")
+            print(f"  This covers the entire hash space, proving no "
+                  f"other names exist in the zone.")
+
         for owner_name, owner_hash, next_hash, types, rdata in ordered:
             _print_nsec3(owner_name, owner_hash, next_hash, types, rdata)
 
+            matched = False
             if owner_hash == ce_found[1]:
+                matched = True
                 print(f"\n    Role: Matches H({ce_name}) — closest "
                       f"encloser proof")
                 print(f"    Proves {ce_name} exists in the zone.")
 
-            elif ncn_found and owner_hash == ncn_found[1] \
+            if ncn_found and owner_hash == ncn_found[1] \
                     and next_hash == ncn_found[2]:
+                matched = True
                 ncn_name = ncn_found[5]
                 h_ncn = ncn_found[6]
                 _, wraparound = nsec3_covers(
@@ -717,8 +728,9 @@ def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
                       f"name cover{wrap_note}")
                 print(f"    Proves {ncn_name} does not exist.")
 
-            elif wc_found and owner_hash == wc_found[1] \
+            if wc_found and owner_hash == wc_found[1] \
                     and next_hash == wc_found[2]:
+                matched = True
                 wc_n = wc_found[5]
                 h_wc = wc_found[6]
                 _, wraparound = nsec3_covers(
@@ -731,7 +743,7 @@ def explain_nsec3_nxdomain(qname, nsec3_records, zone, salt_hex, iterations):
                 print(f"    so no wildcard synthesis can produce an "
                       f"answer.")
 
-            else:
+            if not matched:
                 covers, wraparound = nsec3_covers(
                     owner_hash, next_hash, h_qname)
                 if covers:
