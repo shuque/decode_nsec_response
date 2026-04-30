@@ -396,6 +396,7 @@ def explain_nsec_nodata(qname, qtype, nsec_records, zone):
         print(f"The wildcard lacks a {qtype} record.")
     else:
         print(f"\nNODATA: {qname} exists but has no {qtype} record.")
+    print(f"\nAuthority section:")
 
     for owner, nxt, types, rdata in nsec_records:
         print(f"\n  NSEC: {owner} -> {nxt}")
@@ -561,6 +562,7 @@ def explain_nsec3_nodata(qname, qtype_str, nsec3_records, zone,
 
     if exact_match:
         print(f"\nNODATA: {qname} exists but has no {qtype_str} record.")
+        print(f"\nAuthority section:")
         for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
             print_nsec3_record(owner_hash, next_hash, types, rdata)
 
@@ -605,6 +607,7 @@ def _explain_nsec3_wildcard_nodata(qname, qtype_str, qtype_num,
             print(f"  H({proof.ncn_name}) = {proof.ncn_hash}")
         print(f"  H({proof.wc_name}) = {proof.wc_hash}")
 
+    print(f"\nAuthority section:")
     for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
         print_nsec3_record(owner_hash, next_hash, types, rdata)
 
@@ -874,8 +877,8 @@ def explain_cname_nodata(qname, qtype_str, cname_chain, target,
     else:
         print(f"\nCNAME NODATA: {qname} is an alias; the final target "
               f"{target} has no {qtype_str} record.")
-    for src, dst in cname_chain:
-        print(f"  {src} -> CNAME -> {dst}")
+    print_answer_section(response)
+    print(f"\nAuthority section:")
 
     zone_records = partition_records_by_zone(nsec_records, nsec3_records,
                                              response)
@@ -1014,6 +1017,18 @@ def _explain_nsec3_cname_nodata(target, qtype_str, nsec3_records, zone,
         print_nsec3_optout(rdata)
 
 
+def print_answer_section(response):
+    """Print non-RRSIG answer records, if any."""
+    records = [rrset for rrset in response.answer
+               if rrset.rdtype != dns.rdatatype.RRSIG]
+    if not records:
+        return
+    print(f"\nAnswer section:")
+    for rrset in records:
+        for rdata in rrset:
+            print(f"  {rrset.name} {rrset.ttl} {dns.rdatatype.to_text(rrset.rdtype)} {rdata}")
+
+
 def decode_response(qname, qtype_str, response):
     """Decode and explain NSEC/NSEC3 records in a DNS response."""
     rcode = response.rcode()
@@ -1054,14 +1069,18 @@ def decode_response(qname, qtype_str, response):
     if nsec_records:
         if rcode == dns.rcode.NXDOMAIN:
             print(f"\nNXDOMAIN: {qname} does not exist.")
+            print(f"\nAuthority section:")
             explain_nsec_nxdomain(qname, nsec_records, zone)
         elif nodata:
             explain_nsec_nodata(qname, qtype_str, nsec_records, zone)
         elif wildcard:
             print(f"\nWildcard-synthesized answer for {qname}.")
+            print_answer_section(response)
+            print(f"\nAuthority section:")
             explain_nsec_wildcard(qname, nsec_records, zone)
         elif referral:
             print(f"\nReferral (unsigned delegation).")
+            print(f"\nAuthority section:")
             explain_nsec_referral(qname, nsec_records, zone)
 
     elif nsec3_records:
@@ -1069,6 +1088,7 @@ def decode_response(qname, qtype_str, response):
 
         if rcode == dns.rcode.NXDOMAIN:
             print(f"\nNXDOMAIN: {qname} does not exist.")
+            print(f"\nAuthority section:")
             explain_nsec3_nxdomain(
                 qname, nsec3_records, zone, salt_hex, iterations)
         elif nodata:
@@ -1076,10 +1096,13 @@ def decode_response(qname, qtype_str, response):
                 qname, qtype_str, nsec3_records, zone, salt_hex, iterations)
         elif wildcard:
             print(f"\nWildcard-synthesized answer for {qname}.")
+            print_answer_section(response)
+            print(f"\nAuthority section:")
             explain_nsec3_wildcard(
                 qname, nsec3_records, zone, salt_hex, iterations)
         elif referral:
             print(f"\nReferral (unsigned delegation).")
+            print(f"\nAuthority section:")
             explain_nsec3_referral(
                 qname, nsec3_records, zone, salt_hex, iterations)
 

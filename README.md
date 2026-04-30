@@ -66,10 +66,10 @@ python3 -m pytest test_decode.py -v
 
 ## Sample Output
 
-NSEC3 NODATA
+NSEC3 NODATA:
 
 ```
-$ ./decode_nsec_response.py salesforce.com. TLSA
+$ ./decode_nsec_response.py --doh salesforce.com. TLSA
 
 Query: salesforce.com. TLSA
 Response: NOERROR [AD]
@@ -77,22 +77,23 @@ Response: NOERROR [AD]
 Zone: salesforce.com.
 NSEC3 params: algorithm 1, iterations 0, salt 7FEA7B83
 
+  H(salesforce.com.) = 49STKNJU01HOVPN0L8N7MMD35E9VD3VD
+
 NODATA: salesforce.com. exists but has no TLSA record.
 
-  H(salesforce.com.) = 49STKNJU01HOVPN0L8N7MMD35E9VD3VD
+Authority section:
 
   NSEC3: 49STKNJU01HOVPN0L8N7MMD35E9VD3VD -> 49T2A4TT2OHA06O3HB89B4PCF7U0824L
     Type bitmap: [A NS SOA MX TXT RRSIG DNSKEY NSEC3PARAM TYPE65534]
 
     Role: Matches H(salesforce.com.)
     The type bitmap does not include TLSA, proving no TLSA record exists at this name.
-
 ```
 
 NSEC3 NXDOMAIN:
 
 ```
-$ ./decode_nsec_response.py foo.nxd123.salesforce.com. A
+$ ./decode_nsec_response.py --doh foo.nxd123.salesforce.com. A
 
 Query: foo.nxd123.salesforce.com. A
 Response: NXDOMAIN [AD]
@@ -101,6 +102,8 @@ Zone: salesforce.com.
 NSEC3 params: algorithm 1, iterations 0, salt 7FEA7B83
 
 NXDOMAIN: foo.nxd123.salesforce.com. does not exist.
+
+Authority section:
 
   Closest encloser: salesforce.com.
   Next closer name: nxd123.salesforce.com.
@@ -132,7 +135,7 @@ NXDOMAIN: foo.nxd123.salesforce.com. does not exist.
 NSEC3 Wildcard Match:
 
 ```
-$ ./decode_nsec_response.py foo.wild.dnskensa.com. A
+$ ./decode_nsec_response.py --doh foo.wild.dnskensa.com. A
 
 Query: foo.wild.dnskensa.com. A
 Response: NOERROR [AD]
@@ -141,6 +144,11 @@ Zone: dnskensa.com.
 NSEC3 params: algorithm 1, iterations 10, salt 73B2182A738FCBC4
 
 Wildcard-synthesized answer for foo.wild.dnskensa.com..
+
+Answer section:
+  foo.wild.dnskensa.com. 86400 A 10.1.1.1
+
+Authority section:
 
   Closest encloser: wild.dnskensa.com.
   Next closer name: foo.wild.dnskensa.com.
@@ -153,13 +161,12 @@ Wildcard-synthesized answer for foo.wild.dnskensa.com..
     Role: Covers H(foo.wild.dnskensa.com.) — next closer name cover
     Proves no closer match than wild.dnskensa.com. exists for foo.wild.dnskensa.com.,
     validating that the answer was synthesized from a wildcard.
-
 ```
 
 NSEC NXDOMAIN:
 
 ```
-$ ./decode_nsec_response.py foobar. A
+$ ./decode_nsec_response.py --doh foobar. A
 
 Query: foobar. A
 Response: NXDOMAIN [AD]
@@ -168,12 +175,7 @@ Zone: .
 
 NXDOMAIN: foobar. does not exist.
 
-  NSEC: . -> aaa.
-    Type bitmap: [NS SOA RRSIG NSEC DNSKEY ZONEMD]
-
-    Role: Covers the wildcard (*.)
-    Proves no wildcard exists at the closest encloser (.),
-    so no wildcard synthesis can produce an answer.
+Authority section:
 
   NSEC: foo. -> food.
     Type bitmap: [NS DS RRSIG NSEC]
@@ -181,12 +183,19 @@ NXDOMAIN: foobar. does not exist.
     Role: Covers the queried name (foobar.)
     Owner sorts before qname, next sorts after qname
     in canonical order, proving foobar. does not exist.
+
+  NSEC: . -> aaa.
+    Type bitmap: [NS SOA RRSIG NSEC DNSKEY ZONEMD]
+
+    Role: Covers the wildcard (*.)
+    Proves no wildcard exists at the closest encloser (.),
+    so no wildcard synthesis can produce an answer.
 ```
 
 Wildcard CNAME NODATA (cross-zone; NSEC3 wildcard proof + NSEC target NODATA):
 
 ```
-$ ./decode_nsec_response.py 12345asdfasfadf.horoscope-divination.com. AFSDB
+$ ./decode_nsec_response.py --doh 12345asdfasfadf.horoscope-divination.com. AFSDB
 
 Query: 12345asdfasfadf.horoscope-divination.com. AFSDB
 Response: NOERROR [AD]
@@ -194,10 +203,14 @@ Response: NOERROR [AD]
 
 Wildcard CNAME NODATA: 12345asdfasfadf.horoscope-divination.com. matched wildcard *.horoscope-divination.com.,
 which targets general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com.. The target has no AFSDB record.
-  12345asdfasfadf.horoscope-divination.com. -> CNAME -> general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com.
+
+Answer section:
+  12345asdfasfadf.horoscope-divination.com. 600 CNAME general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com.
+
+Authority section:
 
   --- Wildcard proof (zone: horoscope-divination.com.) ---
-  NSEC3 params: algorithm 1, iterations 0, salt D54DF1360676F4B8
+NSEC3 params: algorithm 1, iterations 0, salt D54DF1360676F4B8
 
   Closest encloser: horoscope-divination.com.
   Next closer name: 12345asdfasfadf.horoscope-divination.com.

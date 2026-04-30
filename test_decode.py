@@ -65,6 +65,10 @@ class TestNSECNodata(unittest.TestCase):
         out = run_decode("nsec_nodata.wire", "nseczone.huque.com.", "TLSA")
         self.assertNotIn("NXDOMAIN", out)
 
+    def test_no_answer_section(self):
+        out = run_decode("nsec_nodata.wire", "nseczone.huque.com.", "TLSA")
+        self.assertNotIn("Answer section:", out)
+
 
 class TestNSECNxdomain(unittest.TestCase):
     def test_classification(self):
@@ -185,6 +189,16 @@ class TestNSEC3Wildcard(unittest.TestCase):
         self.assertIn(
             "Wildcard-synthesized answer for foo.bar.wild.dnskensa.com.", out)
 
+    def test_answer_after_classification(self):
+        out = run_decode("nsec3_wildcard.wire",
+                         "foo.bar.wild.dnskensa.com.", "A")
+        assert_lines_in_order(self, out, [
+            "Wildcard-synthesized answer",
+            "Answer section:",
+            "foo.bar.wild.dnskensa.com.",
+            "A 10.1.1.1",
+        ])
+
     def test_ncn_cover(self):
         out = run_decode("nsec3_wildcard.wire",
                          "foo.bar.wild.dnskensa.com.", "A")
@@ -226,9 +240,21 @@ class TestCNAMENodata(unittest.TestCase):
         self.assertIn("CNAME NODATA: www.huque.com. is an alias", out)
         self.assertIn("cheetara.huque.com. has no TLSA record", out)
 
-    def test_cname_chain(self):
+    def test_answer_after_classification(self):
         out = run_decode("cname_nodata.wire", "www.huque.com.", "TLSA")
-        self.assertIn("www.huque.com. -> CNAME -> cheetara.huque.com.", out)
+        assert_lines_in_order(self, out, [
+            "CNAME NODATA:",
+            "Answer section:",
+            "CNAME cheetara.huque.com.",
+        ])
+
+    def test_cname_in_answer(self):
+        out = run_decode("cname_nodata.wire", "www.huque.com.", "TLSA")
+        assert_lines_in_order(self, out, [
+            "CNAME NODATA:",
+            "Answer section:",
+            "CNAME cheetara.huque.com.",
+        ])
 
     def test_target_nodata_proof(self):
         out = run_decode("cname_nodata.wire", "www.huque.com.", "TLSA")
@@ -246,6 +272,15 @@ class TestWildcardCNAMENodata(unittest.TestCase):
                          "12345asdfasfadf.horoscope-divination.com.", "AFSDB")
         self.assertIn("Wildcard CNAME NODATA", out)
         self.assertIn("*.horoscope-divination.com.", out)
+
+    def test_answer_after_classification(self):
+        out = run_decode("wildcard_cname_nodata.wire",
+                         "12345asdfasfadf.horoscope-divination.com.", "AFSDB")
+        assert_lines_in_order(self, out, [
+            "Wildcard CNAME NODATA:",
+            "Answer section:",
+            "CNAME general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com.",
+        ])
 
     def test_wildcard_proof(self):
         out = run_decode("wildcard_cname_nodata.wire",
