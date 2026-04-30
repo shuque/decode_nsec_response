@@ -156,3 +156,40 @@ NXDOMAIN: foobar. does not exist.
     Owner sorts before qname, next sorts after qname
     in canonical order, proving foobar. does not exist.
 ```
+
+Wildcard CNAME NODATA (cross-zone; NSEC3 wildcard proof + NSEC target NODATA):
+
+```
+$ ./decode_nsec_response.py 12345asdfasfadf.horoscope-divination.com. AFSDB
+
+Query: 12345asdfasfadf.horoscope-divination.com. AFSDB
+Response: NOERROR [AD]
+======================================================================
+
+Wildcard CNAME NODATA: 12345asdfasfadf.horoscope-divination.com. matched wildcard *.horoscope-divination.com.,
+which targets general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com.. The target has no AFSDB record.
+  12345asdfasfadf.horoscope-divination.com. -> CNAME -> general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com.
+
+  --- Wildcard proof (zone: horoscope-divination.com.) ---
+  NSEC3 params: algorithm 1, iterations 0, salt D54DF1360676F4B8
+
+  Closest encloser: horoscope-divination.com.
+  Next closer name: 12345asdfasfadf.horoscope-divination.com.
+  Wildcard:         *.horoscope-divination.com.
+  H(12345asdfasfadf.horoscope-divination.com.) = V24NHP56RH0DS80NDKCVTMVU9BC4IR0M
+
+  NSEC3: UOLUGA2L16M65IELFLBNLEM2V8COSCI6 -> 28DNC0LB8B15CTN3GTIRT1RJDR0P16R7
+    Type bitmap: [A RRSIG]
+
+    Role: Covers H(12345asdfasfadf.horoscope-divination.com.) — next closer name cover (wrap-around)
+    Proves no closer match than horoscope-divination.com. exists for 12345asdfasfadf.horoscope-divination.com.,
+    validating that the CNAME was synthesized from *.horoscope-divination.com..
+
+  --- NODATA proof (zone: herokudns.com.) ---
+
+  NSEC: general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com. -> \000.general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com.
+    Type bitmap: [A AAAA RRSIG NSEC]
+
+    Role: Matches the CNAME target (general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com.)
+    The type bitmap does not include AFSDB, proving no AFSDB record exists at general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com..
+```
