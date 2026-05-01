@@ -26,6 +26,8 @@ import dns.resolver
 import dns.flags
 import dns.dnssec
 
+__version__ = '0.0.1'
+
 DEFAULT_DOH_URL = "https://cloudflare-dns.com/dns-query"
 
 NXNAME_TYPE = 128

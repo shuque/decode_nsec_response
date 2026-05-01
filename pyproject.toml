@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "decode_nsec_response"
+dynamic = ["version"]
+license = "MIT"
+
+authors = [
+    { name = "Shumon Huque", email = "shuque@gmail.com" },
+]
+description = "Decode and explain NSEC/NSEC3 records in DNS responses"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "dnspython>=2.6.0",
+    "dnspython[doh]",
+]
+
+[project.urls]
+Homepage = "https://github.com/shuque/decode_nsec_response"
+Issues = "https://github.com/shuque/decode_nsec_response/issues"
+
+[tool.setuptools]
+py-modules = []
+script-files = ['decode_nsec_response.py']
+
+[tool.setuptools.dynamic]
+version = {attr = "decode_nsec_response.__version__"}

@@ -32,9 +32,24 @@ record in the authenticated denial proof:
 
 ## Dependencies
 
-- Python 3
+- Python 3.9+
 - [dnspython](https://www.dnspython.org/) (`pip install dnspython`)
 - For DoH support: `pip install dnspython[doh]`
+
+
+## Installation
+
+```
+pip install .
+```
+
+Or directly from the GitHub repository:
+
+```
+pip install git+https://github.com/shuque/decode_nsec_response.git
+```
+
+This installs the `decode_nsec_response.py` script and its dependencies.
 
 
 ## Testing
