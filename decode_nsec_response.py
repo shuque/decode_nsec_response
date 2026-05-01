@@ -1120,7 +1120,9 @@ def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Decode and explain NSEC/NSEC3 records in DNS responses")
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=f"Version {__version__}\n"
+                    f"Decode and explain NSEC/NSEC3 records in DNS responses")
     parser.add_argument("qname", help="Query name")
     parser.add_argument("qtype", help="Query type (e.g., A, AAAA, MX)")
     transport = parser.add_mutually_exclusive_group()
