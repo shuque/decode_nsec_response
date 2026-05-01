@@ -29,6 +29,7 @@ TEST_CASES = [
     ("wildcard_cname_nodata",    "12345asdfasfadf.horoscope-divination.com.",     "AFSDB"),
     ("nsec3_nxdomain_circular",  "foo.kalebet1363.com.",                          "AAAA"),
     ("dangling_cname",           "danglingcname.dnskensa.com.",                    "A"),
+    ("dangling_cname_cross_zone", "danglingout.dnskensa.com.",                    "A"),
 ]
 
 

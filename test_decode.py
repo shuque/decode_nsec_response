@@ -369,5 +369,39 @@ class TestDanglingCNAME(unittest.TestCase):
         self.assertNotIn("danglingcname.dnskensa.com. does not exist", out)
 
 
+class TestDanglingCNAMECrossZone(unittest.TestCase):
+    def test_classification(self):
+        out = run_decode("dangling_cname_cross_zone.wire",
+                         "danglingout.dnskensa.com.", "A")
+        self.assertIn("CNAME NXDOMAIN", out)
+        self.assertIn("danglingout.dnskensa.com. is an alias for "
+                      "foo.bar.blah.salesforce.com.", out)
+        self.assertIn("CNAME target does not exist", out)
+
+    def test_answer_section(self):
+        out = run_decode("dangling_cname_cross_zone.wire",
+                         "danglingout.dnskensa.com.", "A")
+        assert_lines_in_order(self, out, [
+            "CNAME NXDOMAIN:",
+            "Answer section:",
+            "CNAME foo.bar.blah.salesforce.com.",
+        ])
+
+    def test_nxdomain_proof_in_target_zone(self):
+        out = run_decode("dangling_cname_cross_zone.wire",
+                         "danglingout.dnskensa.com.", "A")
+        assert_lines_in_order(self, out, [
+            "NXDOMAIN proof (zone: salesforce.com.)",
+            "Closest encloser: salesforce.com.",
+            "Next closer name: blah.salesforce.com.",
+            "H(blah.salesforce.com.)",
+        ])
+
+    def test_not_qname_nxdomain(self):
+        out = run_decode("dangling_cname_cross_zone.wire",
+                         "danglingout.dnskensa.com.", "A")
+        self.assertNotIn("danglingout.dnskensa.com. does not exist", out)
+
+
 if __name__ == "__main__":
     unittest.main()
