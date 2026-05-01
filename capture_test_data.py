@@ -28,6 +28,7 @@ TEST_CASES = [
     ("cname_nodata",             "www.huque.com.",                                "TLSA"),
     ("wildcard_cname_nodata",    "12345asdfasfadf.horoscope-divination.com.",     "AFSDB"),
     ("nsec3_nxdomain_circular",  "foo.kalebet1363.com.",                          "AAAA"),
+    ("dangling_cname",           "danglingcname.dnskensa.com.",                    "A"),
 ]
 
 

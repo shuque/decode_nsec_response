@@ -962,6 +962,51 @@ def _explain_nsec3_wildcard_cname(qname, wildcard, nsec3_records, zone,
         print_nsec3_optout(rdata)
 
 
+def explain_cname_nxdomain(qname, qtype_str, cname_chain, target,
+                           nsec_records, nsec3_records, response):
+    """Explain a dangling CNAME: the CNAME target does not exist."""
+    cname_src = cname_chain[0][0]
+    wildcard = get_wildcard_from_rrsig(response, cname_src,
+                                       dns.rdatatype.CNAME)
+
+    if wildcard:
+        print(f"\nWildcard CNAME NXDOMAIN: {qname} matched wildcard "
+              f"{wildcard},")
+        print(f"which targets {target}. The CNAME target does not exist.")
+    else:
+        print(f"\nCNAME NXDOMAIN: {qname} is an alias for {target}. "
+              f"The CNAME target does not exist.")
+    print_answer_section(response)
+    print(f"\nAuthority section:")
+
+    zone_records = partition_records_by_zone(nsec_records, nsec3_records,
+                                             response)
+
+    if wildcard:
+        wc_zone = dns.name.Name(wildcard.labels[1:])
+        owner_zone_recs = zone_records.pop(wc_zone, None)
+        if owner_zone_recs:
+            owner_nsec, owner_nsec3 = owner_zone_recs
+            print(f"\n  --- Wildcard proof (zone: {wc_zone}) ---")
+            if owner_nsec:
+                _explain_nsec_wildcard_cname(
+                    qname, wildcard, owner_nsec, wc_zone)
+            elif owner_nsec3:
+                salt_hex, iterations = print_nsec3_params(owner_nsec3)
+                _explain_nsec3_wildcard_cname(
+                    qname, wildcard, owner_nsec3, wc_zone,
+                    salt_hex, iterations)
+
+    for zone_name, (z_nsec, z_nsec3) in zone_records.items():
+        print(f"\n  --- NXDOMAIN proof (zone: {zone_name}) ---")
+        if z_nsec:
+            explain_nsec_nxdomain(target, z_nsec, zone_name)
+        if z_nsec3:
+            salt_hex, iterations = print_nsec3_params(z_nsec3)
+            explain_nsec3_nxdomain(
+                target, z_nsec3, zone_name, salt_hex, iterations)
+
+
 def _explain_nsec_cname_nodata(target, qtype_str, nsec_records, zone):
     """Explain NSEC proving the CNAME target lacks the queried type."""
     qtype_num = dns.rdatatype.from_text(qtype_str) \
@@ -1025,7 +1070,7 @@ def print_answer_section(response):
                if rrset.rdtype != dns.rdatatype.RRSIG]
     if not records:
         return
-    print(f"\nAnswer section:")
+    print(f"\nAnswer section:\n")
     for rrset in records:
         for rdata in rrset:
             print(f"  {rrset.name} {rrset.ttl} {dns.rdatatype.to_text(rrset.rdtype)} {rdata}")
@@ -1058,6 +1103,14 @@ def decode_response(qname, qtype_str, response):
     if cname_nodata:
         explain_cname_nodata(qname, qtype_str, cname_chain, cname_target,
                              nsec_records, nsec3_records, response)
+        print()
+        return
+
+    cname_nxdomain = (cname_chain and rcode == dns.rcode.NXDOMAIN
+                      and (nsec_records or nsec3_records))
+    if cname_nxdomain:
+        explain_cname_nxdomain(qname, qtype_str, cname_chain, cname_target,
+                               nsec_records, nsec3_records, response)
         print()
         return
 

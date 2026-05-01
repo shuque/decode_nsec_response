@@ -77,7 +77,7 @@ instantly and are not affected by live DNS changes.
 python3 capture_test_data.py
 ```
 
-This queries all 11 test cases via DoH to Cloudflare and saves the raw
+This queries all 12 test cases via DoH to Cloudflare and saves the raw
 wire bytes to `testdata/`.
 
 **Run the test suite:**

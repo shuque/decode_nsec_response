@@ -335,5 +335,39 @@ class TestNSEC3NxdomainCircular(unittest.TestCase):
         self.assertEqual(out.count("wrap-around"), 2)
 
 
+class TestDanglingCNAME(unittest.TestCase):
+    def test_classification(self):
+        out = run_decode("dangling_cname.wire",
+                         "danglingcname.dnskensa.com.", "A")
+        self.assertIn("CNAME NXDOMAIN", out)
+        self.assertIn("danglingcname.dnskensa.com. is an alias for "
+                      "nonexistent.dnskensa.com.", out)
+        self.assertIn("CNAME target does not exist", out)
+
+    def test_answer_section(self):
+        out = run_decode("dangling_cname.wire",
+                         "danglingcname.dnskensa.com.", "A")
+        assert_lines_in_order(self, out, [
+            "CNAME NXDOMAIN:",
+            "Answer section:",
+            "CNAME nonexistent.dnskensa.com.",
+        ])
+
+    def test_nxdomain_proof_uses_target(self):
+        out = run_decode("dangling_cname.wire",
+                         "danglingcname.dnskensa.com.", "A")
+        assert_lines_in_order(self, out, [
+            "NXDOMAIN proof (zone: dnskensa.com.)",
+            "Closest encloser: dnskensa.com.",
+            "Next closer name: nonexistent.dnskensa.com.",
+            "H(nonexistent.dnskensa.com.)",
+        ])
+
+    def test_not_qname_nxdomain(self):
+        out = run_decode("dangling_cname.wire",
+                         "danglingcname.dnskensa.com.", "A")
+        self.assertNotIn("danglingcname.dnskensa.com. does not exist", out)
+
+
 if __name__ == "__main__":
     unittest.main()
