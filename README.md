@@ -51,6 +51,20 @@ pip install git+https://github.com/shuque/decode_nsec_response.git
 
 This installs the `decode_nsec_response.py` script and its dependencies.
 
+For a system-wide install:
+
+```
+sudo pip install .
+```
+
+On systems where pip is restricted from modifying the system Python
+environment (Debian/Ubuntu with PEP 668), use one of:
+
+```
+sudo pip install --break-system-packages .
+sudo pip install --prefix=/usr/local .
+```
+
 
 ## Testing
 
