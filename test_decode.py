@@ -403,5 +403,35 @@ class TestDanglingCNAMECrossZone(unittest.TestCase):
         self.assertNotIn("danglingout.dnskensa.com. does not exist", out)
 
 
+class TestNSEC3OptOutNodata(unittest.TestCase):
+    def test_classification(self):
+        out = run_decode("nsec3_optout_nodata.wire", "princeton.edu.", "DS")
+        self.assertIn("NODATA (Opt-Out)", out)
+        self.assertIn("covered by an opt-out NSEC3 range", out)
+        self.assertIn("insecure delegation without a DS record", out)
+
+    def test_not_wildcard_nodata(self):
+        out = run_decode("nsec3_optout_nodata.wire", "princeton.edu.", "DS")
+        self.assertNotIn("Wildcard NODATA", out)
+        self.assertNotIn("*.edu.", out)
+
+    def test_ce_proof(self):
+        out = run_decode("nsec3_optout_nodata.wire", "princeton.edu.", "DS")
+        assert_lines_in_order(self, out, [
+            "Closest encloser: edu.",
+            "Next closer name: princeton.edu.",
+            "H(edu.)",
+            "H(princeton.edu.) = L367NFBA6O1696ADTUQQ0UD5GEM0TOJJ",
+        ])
+
+    def test_optout_cover_role(self):
+        out = run_decode("nsec3_optout_nodata.wire", "princeton.edu.", "DS")
+        assert_lines_in_order(self, out, [
+            "Role: Covers H(princeton.edu.)",
+            "Opt-out: proves princeton.edu. has no DS record (no secure delegation).",
+            "Role: Matches H(edu.) — closest encloser proof",
+        ])
+
+
 if __name__ == "__main__":
     unittest.main()

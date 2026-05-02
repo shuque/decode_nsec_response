@@ -30,6 +30,7 @@ TEST_CASES = [
     ("nsec3_nxdomain_circular",  "foo.kalebet1363.com.",                          "AAAA"),
     ("dangling_cname",           "danglingcname.dnskensa.com.",                    "A"),
     ("dangling_cname_cross_zone", "danglingout.dnskensa.com.",                    "A"),
+    ("nsec3_optout_nodata",       "princeton.edu.",                                "DS"),
 ]
 
 

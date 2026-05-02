@@ -585,9 +585,60 @@ def explain_nsec3_nodata(qname, qtype_str, nsec3_records, zone,
             print_nsec3_optout(rdata)
         return
 
+    proof = find_nsec3_ce_proof(qname, nsec3_records, zone, salt_hex,
+                                iterations, wc_mode='cover')
+    if proof and proof.ncn_rec and proof.ncn_rec[4].flags & 0x01:
+        _explain_nsec3_optout_nodata(
+            qname, qtype_str, nsec3_records, zone, salt_hex,
+            iterations, h_qname, proof)
+        return
+
     _explain_nsec3_wildcard_nodata(
         qname, qtype_str, qtype_num, nsec3_records, zone,
         salt_hex, iterations, h_qname)
+
+
+def _explain_nsec3_optout_nodata(qname, qtype_str, nsec3_records, zone,
+                                salt_hex, iterations, h_qname, proof):
+    """Explain NSEC3 opt-out NODATA: H(qname) falls within an opt-out
+    NSEC3 range, so the name may exist as an insecure delegation."""
+    print(f"\n  NODATA (Opt-Out): No NSEC3 matches H({qname}).")
+    print(f"  H({qname}) is covered by an opt-out NSEC3 range.")
+    print(f"  The name may exist as an insecure delegation without "
+          f"a {qtype_str} record.")
+
+    h_ce = nsec3_hash_name(proof.ce_name, salt_hex, iterations)
+    print(f"\n  Closest encloser: {proof.ce_name}")
+    print(f"  Next closer name: {proof.ncn_name}")
+    print(f"  H({proof.ce_name}) = {h_ce}")
+    print(f"  H({proof.ncn_name}) = {proof.ncn_hash}")
+
+    print(f"\nAuthority section:")
+    for owner_name, owner_hash, next_hash, types, rdata in nsec3_records:
+        print_nsec3_record(owner_hash, next_hash, types, rdata)
+
+        if proof.ce_rec and owner_hash == proof.ce_rec[1]:
+            print(f"\n    Role: Matches H({proof.ce_name}) — closest "
+                  f"encloser proof")
+            print(f"    Proves {proof.ce_name} exists in the zone.")
+        elif proof.ncn_rec and owner_hash == proof.ncn_rec[1] \
+                and next_hash == proof.ncn_rec[2]:
+            _, wraparound = nsec3_covers(owner_hash, next_hash,
+                                         proof.ncn_hash)
+            wrap_note = " (wrap-around)" if wraparound else ""
+            print(f"\n    Role: Covers H({proof.ncn_name}){wrap_note}")
+            print(f"    Opt-out: proves {proof.ncn_name} has no DS "
+                  f"record (no secure delegation).")
+            print(f"    Whether an insecure delegation exists is "
+                  f"indeterminate (opt-out).")
+        else:
+            covers, wraparound = nsec3_covers(
+                owner_hash, next_hash, h_qname)
+            if covers:
+                wrap_note = " (wrap-around)" if wraparound else ""
+                print(f"\n    Role: Covers H({qname}){wrap_note}")
+
+        print_nsec3_optout(rdata)
 
 
 def _explain_nsec3_wildcard_nodata(qname, qtype_str, qtype_num,
