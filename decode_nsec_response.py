@@ -26,7 +26,7 @@ import dns.resolver
 import dns.flags
 import dns.dnssec
 
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 
 DEFAULT_DOH_URL = "https://cloudflare-dns.com/dns-query"
 
