@@ -193,10 +193,10 @@ class TestNSEC3Wildcard(unittest.TestCase):
         out = run_decode("nsec3_wildcard.wire",
                          "foo.bar.wild.dnskensa.com.", "A")
         assert_lines_in_order(self, out, [
-            "Wildcard-synthesized answer",
             "Answer section:",
             "foo.bar.wild.dnskensa.com.",
             "A 10.1.1.1",
+            "Wildcard-synthesized answer",
         ])
 
     def test_ncn_cover(self):
@@ -240,18 +240,17 @@ class TestCNAMENodata(unittest.TestCase):
         self.assertIn("CNAME NODATA: www.huque.com. is an alias", out)
         self.assertIn("cheetara.huque.com. has no TLSA record", out)
 
-    def test_answer_after_classification(self):
+    def test_answer_before_classification(self):
         out = run_decode("cname_nodata.wire", "www.huque.com.", "TLSA")
         assert_lines_in_order(self, out, [
-            "CNAME NODATA:",
             "Answer section:",
             "CNAME cheetara.huque.com.",
+            "CNAME NODATA:",
         ])
 
     def test_cname_in_answer(self):
         out = run_decode("cname_nodata.wire", "www.huque.com.", "TLSA")
         assert_lines_in_order(self, out, [
-            "CNAME NODATA:",
             "Answer section:",
             "CNAME cheetara.huque.com.",
         ])
@@ -273,13 +272,13 @@ class TestWildcardCNAMENodata(unittest.TestCase):
         self.assertIn("Wildcard CNAME NODATA", out)
         self.assertIn("*.horoscope-divination.com.", out)
 
-    def test_answer_after_classification(self):
+    def test_answer_before_classification(self):
         out = run_decode("wildcard_cname_nodata.wire",
                          "12345asdfasfadf.horoscope-divination.com.", "AFSDB")
         assert_lines_in_order(self, out, [
-            "Wildcard CNAME NODATA:",
             "Answer section:",
             "CNAME general-beetle-fec22eecz21z3tnuxbx8mde3.herokudns.com.",
+            "Wildcard CNAME NODATA:",
         ])
 
     def test_wildcard_proof(self):
@@ -348,9 +347,9 @@ class TestDanglingCNAME(unittest.TestCase):
         out = run_decode("dangling_cname.wire",
                          "danglingcname.dnskensa.com.", "A")
         assert_lines_in_order(self, out, [
-            "CNAME NXDOMAIN:",
             "Answer section:",
             "CNAME nonexistent.dnskensa.com.",
+            "CNAME NXDOMAIN:",
         ])
 
     def test_nxdomain_proof_uses_target(self):
@@ -382,9 +381,9 @@ class TestDanglingCNAMECrossZone(unittest.TestCase):
         out = run_decode("dangling_cname_cross_zone.wire",
                          "danglingout.dnskensa.com.", "A")
         assert_lines_in_order(self, out, [
-            "CNAME NXDOMAIN:",
             "Answer section:",
             "CNAME foo.bar.blah.salesforce.com.",
+            "CNAME NXDOMAIN:",
         ])
 
     def test_nxdomain_proof_in_target_zone(self):

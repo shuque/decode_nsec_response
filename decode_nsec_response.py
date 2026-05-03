@@ -930,7 +930,6 @@ def explain_cname_nodata(qname, qtype_str, cname_chain, target,
     else:
         print(f"\nCNAME NODATA: {qname} is an alias; the final target "
               f"{target} has no {qtype_str} record.")
-    print_answer_section(response)
     print(f"\nAuthority section:")
 
     zone_records = partition_records_by_zone(nsec_records, nsec3_records,
@@ -1027,7 +1026,6 @@ def explain_cname_nxdomain(qname, qtype_str, cname_chain, target,
     else:
         print(f"\nCNAME NXDOMAIN: {qname} is an alias for {target}. "
               f"The CNAME target does not exist.")
-    print_answer_section(response)
     print(f"\nAuthority section:")
 
     zone_records = partition_records_by_zone(nsec_records, nsec3_records,
@@ -1136,6 +1134,8 @@ def decode_response(qname, qtype_str, response):
     if not (response.flags & dns.flags.AD):
         print("WARNING: AD flag not set — response was not DNSSEC-validated.")
 
+    print_answer_section(response)
+
     nsec_records = get_nsec_records(response)
     nsec3_records = get_nsec3_records(response)
 
@@ -1184,7 +1184,6 @@ def decode_response(qname, qtype_str, response):
             explain_nsec_nodata(qname, qtype_str, nsec_records, zone)
         elif wildcard:
             print(f"\nWildcard-synthesized answer for {qname}.")
-            print_answer_section(response)
             print(f"\nAuthority section:")
             explain_nsec_wildcard(qname, nsec_records, zone)
         elif referral:
@@ -1205,7 +1204,6 @@ def decode_response(qname, qtype_str, response):
                 qname, qtype_str, nsec3_records, zone, salt_hex, iterations)
         elif wildcard:
             print(f"\nWildcard-synthesized answer for {qname}.")
-            print_answer_section(response)
             print(f"\nAuthority section:")
             explain_nsec3_wildcard(
                 qname, nsec3_records, zone, salt_hex, iterations)
