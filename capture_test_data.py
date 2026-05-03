@@ -31,16 +31,20 @@ TEST_CASES = [
     ("dangling_cname",           "danglingcname.dnskensa.com.",                    "A"),
     ("dangling_cname_cross_zone", "danglingout.dnskensa.com.",                    "A"),
     ("nsec3_optout_nodata",       "princeton.edu.",                                "DS"),
+    ("badsig_servfail",           "badsig.dnskensa.com.",                          "A"),
+    ("badsig_cd",                 "badsig.dnskensa.com.",                          "A",    dns.flags.CD),
 ]
 
 
 def capture():
     os.makedirs(TESTDATA_DIR, exist_ok=True)
-    for name, qname_str, qtype in TEST_CASES:
+    for entry in TEST_CASES:
+        name, qname_str, qtype = entry[0], entry[1], entry[2]
+        extra_flags = entry[3] if len(entry) > 3 else 0
         print(f"Capturing {name}: {qname_str} {qtype} ... ", end="", flush=True)
         qname = dns.name.from_text(qname_str)
         q = dns.message.make_query(qname, qtype, want_dnssec=True)
-        q.flags |= dns.flags.AD
+        q.flags |= dns.flags.AD | extra_flags
         response = dns.query.https(q, DOH_URL)
         path = os.path.join(TESTDATA_DIR, f"{name}.wire")
         with open(path, "wb") as f:

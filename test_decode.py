@@ -432,5 +432,54 @@ class TestNSEC3OptOutNodata(unittest.TestCase):
         ])
 
 
+class TestBadsigServfail(unittest.TestCase):
+    def test_servfail(self):
+        out = run_decode("badsig_servfail.wire",
+                         "badsig.dnskensa.com.", "A")
+        self.assertIn("SERVFAIL", out)
+
+    def test_no_ad(self):
+        out = run_decode("badsig_servfail.wire",
+                         "badsig.dnskensa.com.", "A")
+        self.assertIn("WARNING: AD flag not set", out)
+
+    def test_no_answer(self):
+        out = run_decode("badsig_servfail.wire",
+                         "badsig.dnskensa.com.", "A")
+        self.assertNotIn("Answer section:", out)
+
+    def test_no_nsec(self):
+        out = run_decode("badsig_servfail.wire",
+                         "badsig.dnskensa.com.", "A")
+        self.assertIn("No NSEC or NSEC3 records", out)
+
+
+class TestBadsigCD(unittest.TestCase):
+    def test_noerror(self):
+        out = run_decode("badsig_cd.wire",
+                         "badsig.dnskensa.com.", "A")
+        self.assertIn("NOERROR", out)
+
+    def test_no_ad(self):
+        out = run_decode("badsig_cd.wire",
+                         "badsig.dnskensa.com.", "A")
+        self.assertIn("WARNING: AD flag not set", out)
+        self.assertNotIn("[AD]", out)
+
+    def test_answer_present(self):
+        out = run_decode("badsig_cd.wire",
+                         "badsig.dnskensa.com.", "A")
+        assert_lines_in_order(self, out, [
+            "Answer section:",
+            "badsig.dnskensa.com.",
+            "A 10.93.45.12",
+        ])
+
+    def test_no_nsec(self):
+        out = run_decode("badsig_cd.wire",
+                         "badsig.dnskensa.com.", "A")
+        self.assertIn("No NSEC or NSEC3 records", out)
+
+
 if __name__ == "__main__":
     unittest.main()

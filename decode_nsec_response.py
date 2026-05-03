@@ -36,10 +36,12 @@ CEProof = namedtuple('CEProof', ['ce_name', 'ce_rec', 'ncn_name', 'ncn_hash',
                                  'ncn_rec', 'wc_name', 'wc_hash', 'wc_rec'])
 
 
-def query_dns(qname, rdtype, doh_url=None, resolver_ip=None):
+def query_dns(qname, rdtype, doh_url=None, resolver_ip=None, cd=False):
     """Send a DNS query and return the response."""
     q = dns.message.make_query(qname, rdtype, want_dnssec=True)
     q.flags |= dns.flags.AD
+    if cd:
+        q.flags |= dns.flags.CD
     if doh_url:
         return dns.query.https(q, doh_url)
     nameserver = resolver_ip or dns.resolver.Resolver().nameservers[0]
@@ -1216,10 +1218,10 @@ def decode_response(qname, qtype_str, response):
     print()
 
 
-def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None):
+def decode(qname_str, qtype_str, doh_url=None, resolver_ip=None, cd=False):
     """Query DNS and decode the response."""
     qname = dns.name.from_text(qname_str)
-    response = query_dns(qname, qtype_str, doh_url, resolver_ip)
+    response = query_dns(qname, qtype_str, doh_url, resolver_ip, cd=cd)
     decode_response(qname, qtype_str, response)
 
 
@@ -1237,6 +1239,8 @@ def main():
                            help="DoH server URL (implies --doh)")
     transport.add_argument("--resolver", metavar="IP",
                            help="Use this resolver IP address instead of system default")
+    parser.add_argument("--cd", action="store_true",
+                        help="Set CD (Checking Disabled) flag in the query")
     args = parser.parse_args()
 
     doh_url = None
@@ -1251,7 +1255,7 @@ def main():
         qname += '.'
 
     try:
-        decode(qname, args.qtype, doh_url, resolver_ip)
+        decode(qname, args.qtype, doh_url, resolver_ip, cd=args.cd)
     except Exception as e:
         print(f"\nError: {e}", file=sys.stderr)
         sys.exit(1)
