@@ -1133,6 +1133,9 @@ def decode_response(qname, qtype_str, response):
 
     print_header(qname, qtype_str, rcode, response)
 
+    if not (response.flags & dns.flags.AD):
+        print("WARNING: AD flag not set — response was not DNSSEC-validated.")
+
     nsec_records = get_nsec_records(response)
     nsec3_records = get_nsec3_records(response)
 
