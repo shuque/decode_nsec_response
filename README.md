@@ -3,28 +3,23 @@
 ## Description
 
 [decode\_nsec\_response.py](decode_nsec_response.py) — Queries a given
-name and type, then decodes and explains the NSEC or NSEC3 records in
-the authority section of the response. Identifies the role of each
-record in the authenticated denial proof:
+name and type, using a validating DNS resolver, then decodes and explains
+the NSEC or NSEC3 records in the authority section of the response.
+Identifies the role of each record in the authenticated denial proof:
 
 - **NXDOMAIN (NSEC)**: which NSEC covers the queried name and which
-  covers the wildcard at the closest encloser, with wrap-around
-  detection.
+  covers the wildcard at the closest encloser.
 - **NXDOMAIN (NSEC3)**: computes NSEC3 hashes and identifies the
   closest encloser match, next closer name cover, and wildcard cover.
 - **NODATA**: explains how the type bitmap proves the queried type
   does not exist.
 - **Wildcard synthesis**: identifies the NSEC/NSEC3 proving no closer
-  name exists, validating the wildcard match. Handles wildcard NODATA
-  (wildcard exists but lacks the queried type).
+  match than the wildcard exists, validating the wildcard match. Handles
+  wildcard NODATA (wildcard exists but lacks the queried type).
 - **Compact Denial of Existence**: detects both NSEC (RFC 9824) and
   NSEC3 (RFC 9824 Section 4) CDoE patterns, with or without NXNAME.
-- **Names with children**: explains the `\000` child label successor
-  used for names that have children in the zone.
 - **NSEC3 opt-out**: flags opt-out NSEC3 records and notes that
   unsigned delegations may exist within the covered range.
-- **Referrals**: annotates NSEC/NSEC3 records proving unsigned
-  delegations (no DS).
 
 ```
 ./decode_nsec_response.py [--doh] [--doh-server URL] QNAME QTYPE
